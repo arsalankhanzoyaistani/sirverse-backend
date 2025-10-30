@@ -8,6 +8,8 @@ from flask_cors import CORS
 from flask_jwt_extended import (
     JWTManager, create_access_token, jwt_required, get_jwt_identity, decode_token
 )
+from routes.moderation import moderation_bp
+from routes.legal import legal_bp
 from flask_migrate import Migrate
 from sqlalchemy import desc
 from pytz import timezone, UTC
@@ -103,16 +105,15 @@ def send_sms_via_provider(phone: str, message: str) -> bool:
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(80), unique=True, nullable=False)
-    phone = db.Column(db.String(20), unique=True, nullable=False)
-    full_name = db.Column(db.String(100))
-    avatar = db.Column(db.String(200), default="👤")
-    bio = db.Column(db.Text)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    email = db.Column(db.String(120), unique=True, nullable=False)
+    full_name = db.Column(db.String(120), nullable=True)
+    avatar = db.Column(db.String(255), nullable=True)
+    bio = db.Column(db.Text, nullable=True) 
+    created_at = db.Column(db.DateTime, server_default=db.func.now())
 
-    otp_hash = db.Column(db.String(128), nullable=True)
+    otp_hash = db.Column(db.String(255), nullable=True)
     otp_expiry = db.Column(db.DateTime, nullable=True)
     otp_attempts = db.Column(db.Integer, default=0)
-
 
 class Post(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -141,6 +142,79 @@ class Like(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     __table_args__ = (db.UniqueConstraint("user_id", "post_id", name="_user_post_unique"),)
 
+# ------------------------------------------------
+# Reels Models
+# ------------------------------------------------
+class Reel(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    video_url = db.Column(db.String(500), nullable=False)
+    caption = db.Column(db.Text, nullable=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    likes_count = db.Column(db.Integer, default=0)
+    user = db.relationship("User", backref="reels", lazy=True)
+    likes = db.relationship("ReelLike", backref="reel", cascade="all,delete-orphan", lazy=True)
+    comments = db.relationship("ReelComment", backref="reel", cascade="all,delete-orphan", lazy=True)  
+
+class ReelLike(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    reel_id = db.Column(db.Integer, db.ForeignKey("reel.id"), nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    __table_args__ = (db.UniqueConstraint("user_id", "reel_id", name="_user_reel_unique"),)
+
+class ReelComment(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    reel_id = db.Column(db.Integer, db.ForeignKey("reel.id"), nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
+    content = db.Column(db.Text, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    user = db.relationship("User", lazy=True)
+
+
+
+# ------------------------------------------------
+# Moderation Models (Add after existing models)
+# ------------------------------------------------
+
+class Block(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    blocker_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
+    blocked_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    __table_args__ = (db.UniqueConstraint("blocker_id", "blocked_id", name="_user_block_unique"),)
+
+class Report(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    reporter_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
+    content_type = db.Column(db.String(20), nullable=False)  # 'post', 'reel', 'comment', 'user'
+    content_id = db.Column(db.Integer, nullable=False)
+    reason = db.Column(db.String(200), nullable=False)
+    description = db.Column(db.Text)
+    status = db.Column(db.String(20), default='pending')  # pending, reviewed, resolved
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    reporter = db.relationship("User", foreign_keys=[reporter_id])
+
+# ------------------------------------------------
+# Legal/Content Models
+# ------------------------------------------------
+
+class TermsOfService(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    version = db.Column(db.String(20), nullable=False)
+    content = db.Column(db.Text, nullable=False)
+    active = db.Column(db.Boolean, default=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+class PrivacyPolicy(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    version = db.Column(db.String(20), nullable=False)
+    content = db.Column(db.Text, nullable=False)
+    active = db.Column(db.Boolean, default=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
     # ------------------------------------------------
 # Chat System (Phase 1)
 # ------------------------------------------------
@@ -164,6 +238,21 @@ class Message(db.Model):
     sender_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
     content = db.Column(db.Text, nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+
+    # ------------------------------------------------
+# Follow System Models
+# ------------------------------------------------
+
+class Follow(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    follower_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
+    following_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    __table_args__ = (db.UniqueConstraint("follower_id", "following_id", name="_user_follow_unique"),)
+
+    follower = db.relationship("User", foreign_keys=[follower_id])
+    following = db.relationship("User", foreign_keys=[following_id])
 
 # --- serializers ---
 def message_dict(m):
@@ -368,63 +457,127 @@ def comment_dict(c):
     }
 
 # ------------------------------------------------
-# AUTH: OTP send & verify
+# Reels serializers and helpers
 # ------------------------------------------------
+def reel_dict(r):
+    iso, human = to_pk_time(r.created_at)
+    if not hasattr(r, "user") or r.user is None:
+        author = {"id": None, "username": "Unknown User", "avatar": "https://cdn-icons-png.flaticon.com/512/1077/1077012.png"}
+    else:
+        author = {"id": r.user.id, "username": r.user.username, "avatar": r.user.avatar or "👤"}
+    
+    return {
+        "id": r.id,
+        "video_url": r.video_url,
+        "caption": r.caption,
+        "author": author,
+        "likes_count": r.likes_count,
+        "created_at": r.created_at.isoformat() if r.created_at else None,
+        "created_at_pk": iso,
+        "created_at_pk_human": human,
+    }
+
+def reel_comment_dict(c):
+    iso, human = to_pk_time(c.created_at)
+    if not hasattr(c, "user") or c.user is None:
+        commenter = {"id": None, "username": "Unknown User", "avatar": "👤"}
+    else:
+        commenter = {"id": c.user.id, "username": c.user.username, "avatar": c.user.avatar or "👤"}
+
+    return {
+        "id": c.id,
+        "reel_id": c.reel_id,
+        "user": commenter,
+        "content": c.content,
+        "created_at": c.created_at.isoformat(),
+        "created_at_pk": iso,
+        "created_at_pk_human": human,
+    }
+
+
+# ------------------------------------------------
+# AUTH: EMAIL OTP send & verify (FINAL FIXED)
+# ------------------------------------------------
+from email.mime.text import MIMEText
+import smtplib
+
 @app.route("/api/auth/send_otp", methods=["POST"])
 def send_otp():
     data = request.get_json() or {}
-    phone = (data.get("phone") or "").strip()
-    username = data.get("username")
-    if not phone:
-        return jsonify({"error": "phone required"}), 400
+    email = (data.get("email") or "").strip().lower()
+    username = (data.get("username") or "").strip()
 
-    phone = phone.replace(" ", "").replace("-", "")
-    user = User.query.filter_by(phone=phone).first()
-    if not user:
-        uname = username or f"user_{phone[-4:]}"
-        if User.query.filter_by(username=uname).first():
-            uname = f"{uname}_{int(datetime.utcnow().timestamp())%10000}"
-        user = User(username=uname, phone=phone)
+    if not email:
+        return jsonify({"error": "Email required"}), 400
+    if not username:
+        return jsonify({"error": "Username required"}), 400
+
+    # ✅ FIX: Check by both username and email (to avoid duplicate error)
+    user = User.query.filter(
+        (User.username == username) | (User.email == email)
+    ).first()
+
+    if user:
+        # update email if changed
+        user.email = email
+    else:
+        # create new user
+        user = User(username=username, email=email)
         db.session.add(user)
-        db.session.commit()
 
-    now = datetime.utcnow()
-    if user.otp_expiry and user.otp_expiry > now - timedelta(minutes=10) and (user.otp_attempts or 0) >= 10:
-        return jsonify({"error": "Too many OTP requests. Try later."}), 429
-
+    # Generate & store OTP
     otp = generate_otp()
     user.otp_hash = hash_otp(otp)
     user.otp_expiry = datetime.utcnow() + timedelta(minutes=OTP_EXP_MINUTES)
     user.otp_attempts = (user.otp_attempts or 0) + 1
     db.session.commit()
 
-    if DEV_MODE:
-        print(f"DEV OTP for {phone} -> {otp}")
-        return jsonify({"message": "OTP generated (DEV_MODE)", "dev_otp": otp, "username": user.username}), 200
-    else:
-        sent = send_sms_via_provider(phone, f"Your SirVerse OTP is {otp}")
-        if not sent:
-            return jsonify({"error": "Failed to send SMS"}), 500
-        return jsonify({"message": "OTP sent"}), 200
+    # Send OTP via Gmail
+    sender = os.getenv("GMAIL_USER")
+    password = os.getenv("GMAIL_PASS")
+
+    msg = MIMEText(f"""
+Hi {username},
+
+Your SirVerse GPT verification code is: {otp}
+It expires in 5 minutes.
+
+Regards,
+SirVerse GPT Team
+""")
+    msg["Subject"] = "SirVerse GPT - Email OTP Verification"
+    msg["From"] = f"SirVerse GPT <{sender}>"
+    msg["To"] = email
+
+    try:
+        server = smtplib.SMTP("smtp.gmail.com", 587)
+        server.starttls()
+        server.login(sender, password)
+        server.sendmail(sender, [email], msg.as_string())
+        server.quit()
+        print(f"📧 OTP sent to {email} (code: {otp})")
+        return jsonify({"message": "OTP sent to email"}), 200
+    except Exception as e:
+        print("Email send error:", e)
+        return jsonify({"error": "Failed to send OTP"}), 500
+
 
 @app.route("/api/auth/verify_otp", methods=["POST"])
 def verify_otp():
     data = request.get_json() or {}
-    phone = (data.get("phone") or "").strip()
+    email = (data.get("email") or "").strip().lower()
     otp = (data.get("otp") or "").strip()
-    if not phone or not otp:
-        return jsonify({"error": "phone and otp required"}), 400
 
-    user = User.query.filter_by(phone=phone).first()
+    if not email or not otp:
+        return jsonify({"error": "Email and OTP required"}), 400
+
+    user = User.query.filter_by(email=email).first()
     if not user or not user.otp_hash:
-        return jsonify({"error": "No OTP request found for this number"}), 404
+        return jsonify({"error": "No OTP request found"}), 404
 
     now = datetime.utcnow()
     if not user.otp_expiry or user.otp_expiry < now:
         return jsonify({"error": "OTP expired"}), 400
-
-    if (user.otp_attempts or 0) >= OTP_MAX_ATTEMPTS and user.otp_expiry > now - timedelta(minutes=15):
-        return jsonify({"error": "Too many wrong attempts. Try later."}), 429
 
     if hash_otp(otp) == user.otp_hash:
         user.otp_hash = None
@@ -432,11 +585,15 @@ def verify_otp():
         user.otp_attempts = 0
         db.session.commit()
         token = create_access_token(identity=str(user.id), expires_delta=timedelta(days=30))
-        return jsonify({"access_token": token, "user": {"id": user.id, "username": user.username}}), 200
+        return jsonify({
+            "access_token": token,
+            "user": {"id": user.id, "username": user.username, "email": user.email}
+        }), 200
     else:
         user.otp_attempts = (user.otp_attempts or 0) + 1
         db.session.commit()
         return jsonify({"error": "Invalid OTP"}), 401
+
 
 # ------------------------------------------------
 # Posts CRUD + upload
@@ -519,6 +676,347 @@ def upload_file():
     except Exception as e:
         print("❌ Upload failed:", e)
         return jsonify({"error": "Upload failed"}), 500
+    
+
+
+    # ======== ADD BLOCK ENDPOINTS ========
+@app.route('/api/blocks/<int:user_id>', methods=['POST'])
+@jwt_required()
+def block_user(user_id):
+    uid = int(get_jwt_identity())
+    
+    if uid == user_id:
+        return jsonify({"error": "Cannot block yourself"}), 400
+    
+    # Check if already blocked
+    existing = Block.query.filter_by(blocker_id=uid, blocked_id=user_id).first()
+    if existing:
+        return jsonify({"error": "User already blocked"}), 400
+    
+    # Check if user exists
+    user_to_block = User.query.get(user_id)
+    if not user_to_block:
+        return jsonify({"error": "User not found"}), 404
+    
+    block = Block(blocker_id=uid, blocked_id=user_id)
+    db.session.add(block)
+    db.session.commit()
+    
+    return jsonify({"message": "User blocked successfully"}), 201
+
+@app.route('/api/blocks/<int:user_id>', methods=['DELETE'])
+@jwt_required()
+def unblock_user(user_id):
+    uid = int(get_jwt_identity())
+    
+    block = Block.query.filter_by(blocker_id=uid, blocked_id=user_id).first()
+    if not block:
+        return jsonify({"error": "User not blocked"}), 404
+    
+    db.session.delete(block)
+    db.session.commit()
+    
+    return jsonify({"message": "User unblocked successfully"}), 200
+
+@app.route('/api/blocks', methods=['GET'])
+@jwt_required()
+def get_blocked_users():
+    uid = int(get_jwt_identity())
+    blocks = Block.query.filter_by(blocker_id=uid).all()
+    
+    blocked_users = []
+    for block in blocks:
+        user = User.query.get(block.blocked_id)
+        if user:
+            blocked_users.append({
+                "id": user.id,
+                "username": user.username,
+                "avatar": user.avatar,
+                "blocked_at": block.created_at.isoformat()
+            })
+    
+    return jsonify({"blocked_users": blocked_users}), 200
+
+# ======== ADD REPORT ENDPOINTS ========
+@app.route('/api/reports', methods=['POST'])
+@jwt_required()
+def create_report():
+    uid = int(get_jwt_identity())
+    data = request.get_json() or {}
+    
+    # Validate required fields
+    if not data.get('content_type') or not data.get('content_id') or not data.get('reason'):
+        return jsonify({"error": "content_type, content_id, and reason are required"}), 400
+    
+    # Validate content_type
+    valid_content_types = ['post', 'reel', 'comment', 'user']
+    if data.get('content_type') not in valid_content_types:
+        return jsonify({"error": f"content_type must be one of: {', '.join(valid_content_types)}"}), 400
+    
+    report = Report(
+        reporter_id=uid,
+        content_type=data.get('content_type'),
+        content_id=data.get('content_id'),
+        reason=data.get('reason'),
+        description=data.get('description', ''),
+        status='pending'
+    )
+    
+    db.session.add(report)
+    db.session.commit()
+    
+    return jsonify({"message": "Report submitted successfully"}), 201
+
+# ======== ADD LEGAL ENDPOINTS ========
+@app.route('/api/legal/terms', methods=['GET'])
+def get_terms():
+    terms = TermsOfService.query.filter_by(active=True).first()
+    if not terms:
+        return jsonify({"error": "No active terms of service found"}), 404
+    
+    return jsonify({
+        "terms": {
+            "id": terms.id,
+            "version": terms.version,
+            "content": terms.content,
+            "created_at": terms.created_at.isoformat()
+        }
+    }), 200
+
+@app.route('/api/legal/privacy', methods=['GET'])
+def get_privacy_policy():
+    policy = PrivacyPolicy.query.filter_by(active=True).first()
+    if not policy:
+        return jsonify({"error": "No active privacy policy found"}), 404
+    
+    return jsonify({
+        "privacy_policy": {
+            "id": policy.id,
+            "version": policy.version,
+            "content": policy.content,
+            "created_at": policy.created_at.isoformat()
+        }
+    }), 200
+    
+     # ------------------------------------------------
+    # Follow System Endpoints
+     # ------------------------------------------------
+
+@app.route('/api/follow/<int:user_id>', methods=['POST'])
+@jwt_required()
+def follow_user(user_id):
+    uid = int(get_jwt_identity())
+    
+    if uid == user_id:
+        return jsonify({"error": "Cannot follow yourself"}), 400
+    
+    # Check if already following
+    existing = Follow.query.filter_by(follower_id=uid, following_id=user_id).first()
+    if existing:
+        return jsonify({"error": "Already following this user"}), 400
+    
+    # Check if user exists
+    user_to_follow = User.query.get(user_id)
+    if not user_to_follow:
+        return jsonify({"error": "User not found"}), 404
+    
+    follow = Follow(follower_id=uid, following_id=user_id)
+    db.session.add(follow)
+    db.session.commit()
+    
+    return jsonify({"message": "User followed successfully"}), 201
+
+@app.route('/api/follow/<int:user_id>', methods=['DELETE'])
+@jwt_required()
+def unfollow_user(user_id):
+    uid = int(get_jwt_identity())
+    
+    follow = Follow.query.filter_by(follower_id=uid, following_id=user_id).first()
+    if not follow:
+        return jsonify({"error": "Not following this user"}), 404
+    
+    db.session.delete(follow)
+    db.session.commit()
+    
+    return jsonify({"message": "User unfollowed successfully"}), 200
+
+@app.route('/api/follow/status/<int:user_id>', methods=['GET'])
+@jwt_required()
+def get_follow_status(user_id):
+    uid = int(get_jwt_identity())
+    
+    is_following = Follow.query.filter_by(follower_id=uid, following_id=user_id).first() is not None
+    
+    return jsonify({"is_following": is_following}), 200
+
+@app.route('/api/follow/stats/<string:username>', methods=['GET'])
+def get_follow_stats(username):
+    user = User.query.filter_by(username=username).first_or_404()
+    
+    followers_count = Follow.query.filter_by(following_id=user.id).count()
+    following_count = Follow.query.filter_by(follower_id=user.id).count()
+    
+    return jsonify({
+        "followers_count": followers_count,
+        "following_count": following_count
+    }), 200
+
+# ------------------------------------------------
+# Reels CRUD + upload
+# ------------------------------------------------
+@app.route("/api/upload/reel", methods=["POST"])
+@jwt_required()
+def upload_reel():
+    """
+    Upload video reels (max 30 seconds) to Cloudinary.
+    """
+    if "file" not in request.files:
+        return jsonify({"error": "No file uploaded"}), 400
+
+    f = request.files["file"]
+    
+    # Check if it's a video file
+    if not f.filename.lower().endswith((".mp4", ".mov", ".avi", ".webm", ".mkv")):
+        return jsonify({"error": "Only video files allowed (MP4, MOV, AVI, WEBM, MKV)"}), 400
+
+    try:
+        # Upload to Cloudinary with video-specific settings
+        up = cloudinary.uploader.upload(
+            f,
+            folder="sirverse_reels",  # Separate folder for reels
+            resource_type="video",
+            transformation=[
+                {"width": 720, "height": 1280, "crop": "limit"},  # Mobile-friendly aspect ratio
+                {"duration": 30}  # Limit to 30 seconds
+            ],
+        )
+        
+        return jsonify({
+            "url": up.get("secure_url"),
+            "public_id": up.get("public_id"),
+            "duration": up.get("duration"),  # Actual duration of uploaded video
+            "format": up.get("format")
+        }), 201
+        
+    except Exception as e:
+        print("❌ Reel upload failed:", e)
+        return jsonify({"error": "Reel upload failed"}), 500
+
+@app.route("/api/reels", methods=["GET"])
+@jwt_required(optional=True)
+def get_reels():
+    page = request.args.get("page", 1, type=int)
+    per_page = request.args.get("per_page", 10, type=int)
+    reels = Reel.query.order_by(desc(Reel.created_at)).paginate(page=page, per_page=per_page, error_out=False)
+    
+    return jsonify({
+        "items": [reel_dict(r) for r in reels.items],
+        "page": page, 
+        "pages": reels.pages, 
+        "total": reels.total
+    }), 200
+
+@app.route("/api/reels", methods=["POST"])
+@jwt_required()
+def create_reel():
+    uid = get_jwt_identity()
+    try:
+        uid_int = int(uid)
+    except Exception:
+        return jsonify({"error": "invalid user id"}), 400
+
+    data = request.get_json() or {}
+    if not data.get("video_url"):
+        return jsonify({"error": "Video URL required"}), 400
+        
+    reel = Reel(
+        video_url=data.get("video_url"),
+        caption=data.get("caption", ""),
+        user_id=uid_int
+    )
+    db.session.add(reel)
+    db.session.commit()
+    return jsonify({"message": "Reel created", "reel": reel_dict(reel)}), 201
+
+@app.route("/api/reels/<int:reel_id>/like", methods=["POST"])
+@jwt_required()
+def toggle_reel_like(reel_id):
+    uid = get_jwt_identity()
+    try:
+        uid_int = int(uid)
+    except Exception:
+        return jsonify({"error": "invalid user id"}), 400
+        
+    reel = Reel.query.get_or_404(reel_id)
+    existing = ReelLike.query.filter_by(reel_id=reel_id, user_id=uid_int).first()
+    
+    if existing:
+        db.session.delete(existing)
+        reel.likes_count = max(0, reel.likes_count - 1)
+        liked = False
+    else:
+        db.session.add(ReelLike(reel_id=reel_id, user_id=uid_int))
+        reel.likes_count += 1
+        liked = True
+        
+    db.session.commit()
+    return jsonify({"liked": liked, "likes_count": reel.likes_count}), 200
+
+@app.route("/api/reels/<int:reel_id>", methods=["DELETE"])
+@jwt_required()
+def delete_reel(reel_id):
+    uid = get_jwt_identity()
+    try:
+        uid_int = int(uid)
+    except Exception:
+        return jsonify({"error": "invalid user id"}), 400
+
+    reel = Reel.query.get_or_404(reel_id)
+    if reel.user_id != uid_int:
+        return jsonify({"error": "Unauthorized"}), 403
+        
+    if reel.video_url:
+        try:
+            pub = reel.video_url.split("upload/")[1].split(".")[0]
+            cloudinary.uploader.destroy(pub, resource_type="video")
+        except Exception as e:
+            print("Cloudinary video delete failed:", e)
+            
+    db.session.delete(reel)
+    db.session.commit()
+    return jsonify({"message": "Reel deleted"}), 200
+
+# ------------------------------------------------
+# 🎬 Reel Comments
+# ------------------------------------------------
+@app.route("/api/reels/<int:reel_id>/comments", methods=["GET"])
+def get_reel_comments(reel_id):
+    Reel.query.get_or_404(reel_id)
+    cmts = ReelComment.query.filter_by(reel_id=reel_id).order_by(ReelComment.created_at.asc()).all()
+    return jsonify({"comments": [reel_comment_dict(c) for c in cmts]}), 200
+
+
+@app.route("/api/reels/<int:reel_id>/comments", methods=["POST"])
+@jwt_required()
+def add_reel_comment(reel_id):
+    uid = get_jwt_identity()
+    try:
+        uid_int = int(uid)
+    except Exception:
+        return jsonify({"error": "invalid user id"}), 400
+
+    data = request.get_json() or {}
+    text = (data.get("content") or "").strip()
+    if not text:
+        return jsonify({"error": "Content required"}), 400
+
+    Reel.query.get_or_404(reel_id)
+    c = ReelComment(reel_id=reel_id, user_id=uid_int, content=text)
+    db.session.add(c)
+    db.session.commit()
+
+    return jsonify({"message": "Comment added", "comment": reel_comment_dict(c)}), 201
+
 # ------------------------------------------------
 # Comments + Likes + Profiles
 # ------------------------------------------------
@@ -569,6 +1067,7 @@ def toggle_like(pid):
 def get_profile(username):
     user = User.query.filter_by(username=username).first_or_404()
     posts = Post.query.filter_by(user_id=user.id).order_by(desc(Post.created_at)).all()
+    reels = Reel.query.filter_by(user_id=user.id).order_by(desc(Reel.created_at)).all()
     return jsonify({
         "user": {
             "id": user.id,
@@ -579,9 +1078,11 @@ def get_profile(username):
             "created_at": user.created_at.isoformat() if user.created_at else None,
             "created_at_pk": to_pk_time(user.created_at)[0] if user.created_at else None,
             "created_at_pk_human": to_pk_time(user.created_at)[1] if user.created_at else None,
-            "total_posts": len(posts)
+            "total_posts": len(posts),
+            "total_reels": len(reels)
         },
-        "posts": [post_dict(p) for p in posts]
+        "posts": [post_dict(p) for p in posts],
+        "reels": [reel_dict(r) for r in reels]
     }), 200
 # ------------------------------------------------
 # Update user profile (Phase 3)
@@ -642,6 +1143,9 @@ def get_user_stats():
     # Count posts
     posts_count = Post.query.filter_by(user_id=uid).count()
 
+    # Count reels
+    reels_count = Reel.query.filter_by(user_id=uid).count()
+
     # Count comments made by user
     comments_count = Comment.query.filter_by(user_id=uid).count()
 
@@ -650,135 +1154,172 @@ def get_user_stats():
     post_ids = [p.id for p in user_posts]
     likes_received = Like.query.filter(Like.post_id.in_(post_ids)).count() if post_ids else 0
 
+    # Count total likes user received on their reels
+    user_reels = Reel.query.filter_by(user_id=uid).all()
+    reel_ids = [r.id for r in user_reels]
+    reel_likes_received = ReelLike.query.filter(ReelLike.reel_id.in_(reel_ids)).count() if reel_ids else 0
+
     return jsonify({
         "posts": posts_count,
+        "reels": reels_count,
         "comments": comments_count,
-        "likes_received": likes_received
+        "likes_received": likes_received + reel_likes_received,
+        "total_engagement": posts_count + reels_count + comments_count + likes_received + reel_likes_received
     }), 200
 
 
-# -------------------------
-# Sir G: Hugging Face AI Chat
-# -------------------------
-import hashlib
-import time
-import requests
+# ------------------------------------------------
+# 🤖 Sir G — Dual Cloud (Groq + Hugging Face)
+# ------------------------------------------------
+import requests, time, hashlib
 
-# You can override model with env var
-HF_MODEL = os.getenv("HF_MODEL", "google/gemma-2b")
-HF_API_KEY = os.getenv("HF_API_KEY")  # must be set in your .env
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+GROQ_MODEL = os.getenv("GROQ_MODEL", "llama3-8b-instant")
+HF_API_KEY = os.getenv("HF_API_KEY")
+HF_MODEL = os.getenv("HF_MODEL", "meta-llama/Meta-Llama-3-8B-Instruct")
 
-# Simple in-memory cache to reduce calls for repeated identical questions.
-# Key: sha256(prompt + mode) -> value: {"reply": "...", "ts": unix_ts}
 SIRG_CACHE = {}
-SIRG_CACHE_TTL = 60 * 60  # cache identical answers for 1 hour
+CACHE_TTL = 3600  # 1 hour
 
-def _cache_get(key):
+
+def get_cache(key):
     v = SIRG_CACHE.get(key)
-    if not v: 
-        return None
-    if time.time() - v["ts"] > SIRG_CACHE_TTL:
-        SIRG_CACHE.pop(key, None)
-        return None
-    return v["reply"]
+    if v and time.time() - v["t"] < CACHE_TTL:
+        return v["r"]
+    return None
 
-def _cache_set(key, reply):
-    SIRG_CACHE[key] = {"reply": reply, "ts": time.time()}
+
+def set_cache(key, reply):
+    SIRG_CACHE[key] = {"r": reply, "t": time.time()}
+
+
+def query_groq(prompt):
+    url = "https://api.groq.com/openai/v1/chat/completions"
+    headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
+    data = {
+        "model": GROQ_MODEL,
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0.3,
+        "max_tokens": 400,
+    }
+    r = requests.post(url, headers=headers, json=data, timeout=30)
+    j = r.json()
+    if r.status_code == 200 and "choices" in j:
+        return j["choices"][0]["message"]["content"].strip()
+    raise Exception(j.get("error", j))
+
+
+def query_hf(prompt):
+    url = f"https://api-inference.huggingface.co/models/{HF_MODEL}"
+    headers = {"Authorization": f"Bearer {HF_API_KEY}", "Content-Type": "application/json"}
+    data = {"inputs": prompt, "parameters": {"max_new_tokens": 300, "temperature": 0.3}}
+    r = requests.post(url, headers=headers, json=data, timeout=40)
+    j = r.json()
+    if isinstance(j, list) and j and "generated_text" in j[0]:
+        return j[0]["generated_text"].strip()
+    if isinstance(j, dict) and "error" in j:
+        raise Exception(j["error"])
+    return str(j)
+
 
 @app.route("/api/sirg", methods=["POST"])
-@jwt_required(optional=True)  # optional: allow logged and anonymous users
+@jwt_required(optional=True)
 def sirg_chat():
-    """
-    POST JSON: { prompt: "...", mode: "explain" | "summarize" | "quiz" (optional) }
-    Calls Hugging Face Inference API and returns {"reply": "..."}.
-    Uses simple caching and retry on network errors.
-    """
     data = request.get_json() or {}
     prompt = (data.get("prompt") or "").strip()
-    mode = (data.get("mode") or "explain").strip().lower()
-
     if not prompt:
         return jsonify({"error": "prompt required"}), 400
 
-    if not HF_API_KEY:
-        return jsonify({"error": "HF_API_KEY not configured on server"}), 500
-
-    # sanitize mode -> add instruction prefix to make replies educational
-    mode_prompts = {
-        "explain": "Explain this to a student step-by-step and simply:",
-        "summarize": "Summarize this clearly as short study notes:",
+    mode = (data.get("mode") or "explain").lower()
+    prefix = {
+        "explain": "Explain step by step and clearly:",
+        "summarize": "Summarize this text as short study notes:",
         "quiz": "Create 5 multiple-choice questions with answers about:",
-        "translate_urdu": "Translate the following into Urdu, simple words:",
-    }
-    prefix = mode_prompts.get(mode, mode_prompts["explain"])
+        "translate_urdu": "Translate the following into Urdu (simple words):",
+    }.get(mode, "Explain:")
 
     full_prompt = f"{prefix}\n\n{prompt}"
-
-    # cache key
-    cache_key = hashlib.sha256(f"{HF_MODEL}|{mode}|{full_prompt}".encode()).hexdigest()
-    cached = _cache_get(cache_key)
+    cache_key = hashlib.sha256(full_prompt.encode()).hexdigest()
+    cached = get_cache(cache_key)
     if cached:
-        return jsonify({"reply": cached, "cached": True}), 200
+        return jsonify({"reply": cached, "cached": True})
 
-    # HF inference endpoint
-    hf_url = f"https://api-inference.huggingface.co/models/{HF_MODEL}"
-
-    headers = {
-        "Authorization": f"Bearer {HF_API_KEY}",
-        "Content-Type": "application/json",
-    }
-
-    payload = {
-        "inputs": full_prompt,
-        # optional parameters to control length and deterministic answers
-        "parameters": {"max_new_tokens": 300, "temperature": 0.2, "return_full_text": False},
-    }
-
-    # try request with retries
-    last_err = None
-    for attempt in range(2):
+    # 1️⃣ Try Groq
+    if GROQ_API_KEY:
         try:
-            resp = requests.post(hf_url, headers=headers, json=payload, timeout=30)
-            # handle non-JSON error body
-            try:
-                j = resp.json()
-            except Exception:
-                j = None
+            reply = query_groq(full_prompt)
+            set_cache(cache_key, reply)
+            return jsonify({"reply": reply, "source": "groq"})
+        except Exception as e:
+            print("Groq error:", e)
 
-            if resp.status_code == 200 and isinstance(j, list) and j and "generated_text" in j[0]:
-                reply = j[0]["generated_text"].strip()
-                _cache_set(cache_key, reply)
-                return jsonify({"reply": reply, "cached": False}), 200
+    # 2️⃣ Fallback Hugging Face
+    if HF_API_KEY:
+        try:
+            reply = query_hf(full_prompt)
+            set_cache(cache_key, reply)
+            return jsonify({"reply": reply, "source": "huggingface"})
+        except Exception as e:
+            print("HF error:", e)
 
-            # Some models return {"error": "..."} or different shape - try to extract text
-            if isinstance(j, dict) and "error" in j:
-                last_err = j.get("error")
-                # if rate limit or model overloaded, break to return error below
-                break
-            # fallback if response is plain text
-            if isinstance(j, str):
-                reply = j.strip()
-                _cache_set(cache_key, reply)
-                return jsonify({"reply": reply}), 200
+    return jsonify({"error": "No AI provider available"}), 502
 
-            # unknown format - capture text body as fallback
-            text_body = resp.text or ""
-            if text_body:
-                # tiny fallback
-                reply = text_body.strip()[:1500]
-                _cache_set(cache_key, reply)
-                return jsonify({"reply": reply}), 200
 
-            last_err = f"HF status {resp.status_code}"
-        except requests.exceptions.RequestException as e:
-            last_err = str(e)
-            # short backoff
-            time.sleep(0.5)
+# ------------------------------------------------
+# 💬 Sir G Chat History (save / get / delete)
+# ------------------------------------------------
+class AIHistory(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("user.id"))
+    role = db.Column(db.String(10))           # "user" or "sirG"
+    message = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
-    # final error
-    print("SirG HF error:", last_err)
-    return jsonify({"error": "AI service error", "detail": last_err}), 502
+@app.route("/api/ai/history", methods=["GET"])
+@jwt_required()
+def get_ai_history():
+    uid = int(get_jwt_identity())
+    msgs = AIHistory.query.filter_by(user_id=uid)\
+        .order_by(AIHistory.created_at.asc()).all()
+    return jsonify([
+        {"id": m.id, "role": m.role, "text": m.message,
+         "time": m.created_at.isoformat()}
+        for m in msgs
+    ]), 200
 
+
+@app.route("/api/ai/history", methods=["POST"])
+@jwt_required()
+def save_ai_message():
+    uid = int(get_jwt_identity())
+    data = request.get_json() or {}
+    msg = AIHistory(user_id=uid, role=data.get("role"),
+                    message=data.get("text"))
+    db.session.add(msg)
+    db.session.commit()
+    return jsonify({"ok": True}), 201
+
+
+@app.route("/api/ai/history", methods=["DELETE"])
+@jwt_required()
+def clear_ai_history():
+    uid = int(get_jwt_identity())
+    AIHistory.query.filter_by(user_id=uid).delete()
+    db.session.commit()
+    return jsonify({"message": "History cleared"}), 200
+
+# ... your existing AI History code ...
+
+@app.route("/api/ai/history", methods=["DELETE"])
+@jwt_required()
+def delete_ai_history():
+    uid = int(get_jwt_identity())
+    AIHistory.query.filter_by(user_id=uid).delete()
+    db.session.commit()
+    return jsonify({"message": "History cleared"}), 200
+
+
+# ======== CONTINUE WITH EXISTING CODE ========
 # ------------------------------------------------
 # Ping
 # ------------------------------------------------
@@ -787,11 +1328,53 @@ def ping():
     return jsonify({"ok": True, "time": datetime.utcnow().isoformat()}), 200
 
 # ------------------------------------------------
-# Register tools blueprint (notes)
+# Default Legal Content Creation
 # ------------------------------------------------
+
+def create_default_legal_content():
+    """Create default terms and privacy policy if none exist"""
+    try:
+        # Check if we already have active legal content
+        existing_terms = TermsOfService.query.filter_by(active=True).first()
+        existing_privacy = PrivacyPolicy.query.filter_by(active=True).first()
+        
+        # Create default Terms of Service if none exists
+        if not existing_terms:
+            terms = TermsOfService(
+                version="1.0",
+                content="# Terms of Service\n\n## 1. Acceptance of Terms\nBy using SirVerse, you agree to these terms and our Privacy Policy.\n\n## 2. User Responsibilities\nYou agree not to:\n- Post illegal, harmful, or offensive content\n- Harass or bully other users  \n- Impersonate others\n- Share spam or malicious content\n- Violate intellectual property rights\n- Attempt to hack or disrupt the service\n\n## 3. Content Ownership\nYou own the content you create. By posting, you grant us license to display and distribute your content on our platform.\n\n## 4. Account Termination\nWe reserve the right to suspend or terminate accounts that violate these terms.\n\n## 5. Limitation of Liability\nSirVerse is provided \"as is\" without warranties. We are not liable for damages arising from app use.\n\n## 6. Changes to Terms\nWe may update these terms. Continued use constitutes acceptance of changes.",
+                active=True
+            )
+            db.session.add(terms)
+            print("✅ Created default Terms of Service")
+
+        # Create default Privacy Policy if none exists
+        if not existing_privacy:
+            policy = PrivacyPolicy(
+                version="1.0",
+                content="# Privacy Policy\n\n## 1. Information We Collect\n- Email address for authentication\n- Username and profile information  \n- Posts, comments, and messages you create\n- Images and videos you upload\n- Device information for app optimization\n\n## 2. How We Use Your Information\nWe use your information to:\n- Provide and improve our services\n- Authenticate your account\n- Enable social features (posts, messages)\n- Provide AI assistance through Sir G\n- Ensure platform security\n\n## 3. Data Sharing\nWe do not sell your personal data. We only share information:\n- With your consent\n- To comply with legal obligations  \n- To protect our rights and users\n\n## 4. Your Rights\nYou can:\n- Access your personal data\n- Correct inaccurate data\n- Delete your account and data\n- Export your data\n- Opt-out of communications\n\n## 5. Data Retention\nWe retain your data until you delete your account. Deleted content is removed from our servers within 30 days.\n\n## 6. Contact Us\nFor privacy concerns, contact: privacy@sirverse.com",
+                active=True
+            )
+            db.session.add(policy)
+            print("✅ Created default Privacy Policy")
+        
+        db.session.commit()
+        
+    except Exception as e:
+        print(f"⚠️ Warning: Could not create default legal content: {e}")
+        db.session.rollback()
+
+
 # Ensure backend/routes/__init__.py exists
 #from routes.note_routes import note_bp
 #app.register_blueprint(note_bp)
+app.register_blueprint(moderation_bp)
+app.register_blueprint(legal_bp)
+
 if __name__ == "__main__":
-    print("✅ Ready: Auth, Posts, Upload, Comments, Likes, Profile, Chat (SocketIO)")
+    # Create default legal content on startup
+    with app.app_context():
+        create_default_legal_content()
+    
+    print("✅ Ready: Auth, Posts, Upload, Comments, Likes, Profile, Chat (SocketIO), Reels, Moderation, Legal")
     socketio.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 5000)), debug=True)

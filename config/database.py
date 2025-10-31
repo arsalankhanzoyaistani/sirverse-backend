@@ -6,10 +6,9 @@ from sqlalchemy.exc import OperationalError
 db = SQLAlchemy()
 
 def init_db(app):
-    # ✅ Read the database URL
     db_url = os.getenv("DATABASE_URL")
 
-    # ✅ Force correct driver (psycopg3)
+    # ✅ Fix Railway DB URL automatically
     if db_url and db_url.startswith("postgres://"):
         db_url = db_url.replace("postgres://", "postgresql+psycopg://", 1)
     elif db_url and db_url.startswith("postgresql://"):
@@ -26,6 +25,5 @@ def init_db(app):
             conn.execute(text("SELECT 1"))
         print("✅ Database connected successfully (psycopg3)")
     except OperationalError as e:
-        print("❌ Database connection failed:")
-        print(e)
-        print("⚠️ Check your Railway DATABASE_URL value or driver compatibility.")
+        print("❌ Database connection failed:", e)
+        print("⚠️ Check DATABASE_URL in Railway settings.")

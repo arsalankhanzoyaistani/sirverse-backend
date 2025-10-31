@@ -69,7 +69,18 @@ init_db(app)                  # sets up db = SQLAlchemy(app) inside your config
 migrate = Migrate(app, db)
 jwt = JWTManager(app)
 # REPLACE whatever CORS you have with this:
-CORS(app, resources={r"/api/*": {"origins": "*"}}, supports_credentials=True)
+CORS(app, resources={
+    r"/api/*": {
+        "origins": [
+            "http://localhost:3000",
+            "https://sirverse-frontend.vercel.app",  # Your Vercel frontend
+            "https://sirversegpt1.netlify.app"       # Your Netlify frontend
+        ],
+        "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        "allow_headers": ["Content-Type", "Authorization"],
+        "supports_credentials": True
+    }
+})
 
 # --- SocketIO setup ---
 # ✅ Fixed SocketIO threading mode (permanent solution)

@@ -68,7 +68,18 @@ from config.database import init_db, db
 init_db(app)                  # sets up db = SQLAlchemy(app) inside your config
 migrate = Migrate(app, db)
 jwt = JWTManager(app)
-CORS(app, resources={r"/api/*": {"origins": "*"}}, supports_credentials=True)
+CORS(app, resources={
+    r"/api/*": {
+        "origins": [
+            "http://localhost:3000",
+            "https://sirverse-frontend.vercel.app",
+            "https://sirversegpt1.netlify.app"
+        ],
+        "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        "allow_headers": ["Content-Type", "Authorization", "X-Requested-With"],
+        "supports_credentials": True
+    }
+})
 
 # --- SocketIO setup ---
 # ✅ Fixed SocketIO threading mode (permanent solution)

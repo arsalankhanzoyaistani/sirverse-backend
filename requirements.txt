@@ -1,19 +1,28 @@
-Flask
-Flask-Cors
-Flask-SQLAlchemy
-Flask-Migrate
-PyJWT
-python-dotenv
-psycopg2-binary
-bcrypt
-requests
-Flask-JWT-Extended
+# 🌐 Core Flask Framework
+Flask==3.0.3
+Flask-Cors==4.0.1
+Flask-SQLAlchemy==3.1.1
+Flask-Migrate==4.0.5
+Flask-JWT-Extended==4.6.0
 Flask-Limiter==3.5.0
-bleach==6.1.0
-cloudinary
-pytz
-Flask-SocketIO
-eventlet
-email-validator
-flask-talisman==1.1.0
+Flask-SocketIO==5.3.6
 Flask-Caching==2.1.0
+
+# 🧠 Security and Validation
+bcrypt==4.2.0
+PyJWT==2.9.0
+email-validator==2.2.0
+bleach==6.1.0
+flask-talisman==1.1.0
+
+# 🗄️ Database & Time
+psycopg2-binary==2.9.9
+pytz==2024.1
+
+# ☁️ File Uploads & API Calls
+cloudinary==1.41.0
+requests==2.32.3
+
+# ⚙️ Environment & Eventlet (Async)
+python-dotenv==1.0.1
+eventlet==0.33.3

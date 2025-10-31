@@ -67,9 +67,13 @@ init_db(app)                  # sets up db = SQLAlchemy(app) inside your config
 migrate = Migrate(app, db)
 jwt = JWTManager(app)
 CORS(app, resources={r"/api/*": {"origins": "*"}}, supports_credentials=True)
+
 # --- SocketIO setup ---
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode="eventlet")
+# ✅ Fixed SocketIO threading mode (permanent solution)
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
 connected_users = {}  # sid -> user_id mapping for online tracking
+# -----------------------
+
 # -----------------------
 
 

@@ -16,7 +16,7 @@ bleach==6.1.0
 flask-talisman==1.1.0
 
 # 🗄️ Database & Time
-psycopg[binary,pool]==3.1.18
+psycopg[binary,pool]==3.2.12
 pytz==2024.1
 
 # ☁️ File Uploads & API Calls

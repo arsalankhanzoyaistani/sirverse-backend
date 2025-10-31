@@ -19,10 +19,10 @@ import cloudinary.uploader
 
 load_dotenv()
 
-app = Flask(__name__)
-CORS(app)
-jwt = JWTManager(app)
-socketio = SocketIO(app, cors_allowed_origins="*")
+#app = Flask(__name__)
+#CORS(app)
+#jwt = JWTManager(app)
+#socketio = SocketIO(app, cors_allowed_origins="*")
 
 # (then rest of your backend code)
 

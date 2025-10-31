@@ -69,7 +69,7 @@ init_db(app)                  # sets up db = SQLAlchemy(app) inside your config
 migrate = Migrate(app, db)
 jwt = JWTManager(app)
 # REPLACE whatever CORS you have with this:
-CORS(app, origins=["http://localhost:3000", "https://sirverse-frontend.vercel.app"])
+CORS(app, resources={r"/api/*": {"origins": "*"}}, supports_credentials=True)
 
 # --- SocketIO setup ---
 # ✅ Fixed SocketIO threading mode (permanent solution)

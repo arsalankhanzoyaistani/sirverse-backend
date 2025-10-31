@@ -25,4 +25,3 @@ requests==2.32.3
 
 # ⚙️ Environment & Eventlet (Async)
 python-dotenv==1.0.1
-eventlet==0.33.3

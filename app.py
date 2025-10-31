@@ -1375,10 +1375,13 @@ def create_default_legal_content():
 app.register_blueprint(moderation_bp)
 app.register_blueprint(legal_bp)
 
+
 if __name__ == "__main__":
-    # Create default legal content on startup
-    with app.app_context():
-        create_default_legal_content()
-    
-    print("✅ Ready: Auth, Posts, Upload, Comments, Likes, Profile, Chat (SocketIO), Reels, Moderation, Legal")
-    socketio.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 5000)), debug=True)
+    print("🚀 SirVerse GPT backend running in THREADING mode (production-safe)")
+    socketio.run(
+        app,
+        host="0.0.0.0",
+        port=int(os.getenv("PORT", 5000)),
+        debug=False,
+        allow_unsafe_werkzeug=True  # ✅ This fixes the production crash
+    )

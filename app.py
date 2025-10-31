@@ -39,12 +39,14 @@ load_dotenv(dotenv_path=Path(__file__).resolve().parent.parent / ".env")
 # ------------------------------------------------
 app = Flask(__name__)
 
-# fix DATABASE_URL prefix if needed (Railway etc.)
+# ✅ FIX: Use psycopg (PostgreSQL v3 driver) instead of psycopg2
 db_url = os.getenv("DATABASE_URL")
+
 if db_url and db_url.startswith("postgres://"):
-    db_url = db_url.replace("postgres://", "postgresql+psycopg2://", 1)
+    db_url = db_url.replace("postgres://", "postgresql+psycopg://", 1)
 elif db_url and db_url.startswith("postgresql://"):
-    db_url = db_url.replace("postgresql://", "postgresql+psycopg2://", 1)
+    db_url = db_url.replace("postgresql://", "postgresql+psycopg://", 1)
+
 
 app.config.update(
     SECRET_KEY=os.getenv("SECRET_KEY", "change-this"),

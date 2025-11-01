@@ -1,5 +1,5 @@
 # backend/app.py
-import os, sys, random, hashlib
+import os, sys, random, hashlib, requests
 from datetime import datetime, timedelta
 from pathlib import Path
 from dotenv import load_dotenv
@@ -16,19 +16,10 @@ from pytz import timezone, UTC
 from flask_socketio import SocketIO, emit, join_room, leave_room
 import cloudinary
 import cloudinary.uploader
+from email.mime.text import MIMEText
+import smtplib
 
 load_dotenv()
-
-#app = Flask(__name__)
-#CORS(app)
-#jwt = JWTManager(app)
-#socketio = SocketIO(app, cors_allowed_origins="*")
-
-# (then rest of your backend code)
-
-
-
-# (rest of your app.py continues below...)
 
 # ------------------------------------------------
 # load .env from project root reliably
@@ -46,7 +37,6 @@ if db_url and db_url.startswith("postgres://"):
     db_url = db_url.replace("postgres://", "postgresql+psycopg://", 1)
 elif db_url and db_url.startswith("postgresql://"):
     db_url = db_url.replace("postgresql://", "postgresql+psycopg://", 1)
-
 
 app.config.update(
     SECRET_KEY=os.getenv("SECRET_KEY", "change-this"),
@@ -76,9 +66,6 @@ socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
 connected_users = {}  # sid -> user_id mapping for online tracking
 # -----------------------
 
-# -----------------------
-
-
 print("🚀 SirVerse GPT backend starting...")
 
 # ------------------------------------------------
@@ -103,6 +90,165 @@ def send_sms_via_provider(phone: str, message: str) -> bool:
     except Exception as e:
         print("SMS send error:", e)
         return False
+
+# ------------------------------------------------
+# SendPulse Email Integration
+# ------------------------------------------------
+def send_otp_sendpulse(email, username, otp):
+    """
+    SendPulse API Method - 12,000 free emails/month
+    """
+    try:
+        # Your SendPulse credentials
+        SENDPLUSE_API_KEY = "376e0972ab2787829ca76222df5a0238"
+        SENDPLUSE_SECRET = "ab7185bbdfa746d0030b7412c3e5cb3b"
+        
+        print(f"🔑 Using SendPulse API for {email}")
+        
+        # Step 1: Get access token
+        auth_response = requests.post(
+            "https://api.sendpulse.com/oauth/access_token",
+            json={
+                "grant_type": "client_credentials",
+                "client_id": SENDPLUSE_API_KEY,
+                "client_secret": SENDPLUSE_SECRET
+            },
+            timeout=10
+        )
+        
+        if auth_response.status_code != 200:
+            print(f"❌ SendPulse auth failed: {auth_response.status_code} - {auth_response.text}")
+            return False
+            
+        auth_data = auth_response.json()
+        access_token = auth_data.get("access_token")
+        
+        if not access_token:
+            print("❌ No access token received")
+            return False
+            
+        print("✅ SendPulse authentication successful")
+        
+        # Step 2: Send email
+        email_data = {
+            "email": {
+                "subject": "SirVerse GPT - OTP Verification",
+                "from": {"name": "SirVerse GPT", "email": "noreply@sirverse.com"},
+                "to": [{"email": email}],
+                "html": f"""
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <style>
+                        body {{ font-family: Arial, sans-serif; background: #f9fafb; padding: 20px; }}
+                        .container {{ max-width: 600px; margin: 0 auto; background: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }}
+                        .header {{ color: #4F46E5; text-align: center; margin-bottom: 30px; }}
+                        .otp-box {{ background: #f3f4f6; padding: 20px; text-align: center; font-size: 32px; font-weight: bold; letter-spacing: 8px; margin: 25px 0; border-radius: 8px; border: 2px dashed #4F46E5; }}
+                        .footer {{ margin-top: 30px; padding-top: 20px; border-top: 1px solid #e5e7eb; color: #6b7280; font-size: 14px; text-align: center; }}
+                    </style>
+                </head>
+                <body>
+                    <div class="container">
+                        <div class="header">
+                            <h2>SirVerse GPT</h2>
+                        </div>
+                        <p>Hi <strong>{username}</strong>,</p>
+                        <p>Your verification code is:</p>
+                        <div class="otp-box">{otp}</div>
+                        <p>This code expires in <strong>{OTP_EXP_MINUTES} minutes</strong>.</p>
+                        <p>If you didn't request this code, please ignore this email.</p>
+                        <div class="footer">
+                            <p>SirVerse GPT Team</p>
+                            <p>This is an automated message, please do not reply.</p>
+                        </div>
+                    </div>
+                </body>
+                </html>
+                """,
+                "text": f"""Hi {username},
+
+Your SirVerse GPT verification code is: {otp}
+
+This code expires in {OTP_EXP_MINUTES} minutes.
+
+If you didn't request this code, please ignore this email.
+
+Regards,
+SirVerse GPT Team"""
+            }
+        }
+        
+        email_response = requests.post(
+            "https://api.sendpulse.com/smtp/emails",
+            headers={
+                "Authorization": f"Bearer {access_token}",
+                "Content-Type": "application/json"
+            },
+            json=email_data,
+            timeout=15
+        )
+        
+        print(f"📧 SendPulse email response: {email_response.status_code}")
+        
+        if email_response.status_code == 200:
+            print(f"✅ OTP successfully sent via SendPulse to {email}")
+            return True
+        else:
+            print(f"❌ SendPulse email failed: {email_response.text}")
+            return False
+            
+    except requests.exceptions.Timeout:
+        print("❌ SendPulse API timeout")
+        return False
+    except Exception as e:
+        print(f"❌ SendPulse error: {str(e)}")
+        return False
+
+def send_otp_email_final(email, username, otp):
+    """
+    Main function to send OTP emails
+    """
+    print(f"🔄 Attempting to send OTP to {email}")
+    
+    # Try SendPulse first
+    try:
+        if send_otp_sendpulse(email, username, otp):
+            return True
+    except Exception as e:
+        print(f"SendPulse failed: {e}")
+    
+    # Fallback: Gmail SMTP
+    try:
+        sender = os.getenv("GMAIL_USER")
+        password = os.getenv("GMAIL_PASS")
+        
+        if sender and password:
+            msg = MIMEText(f"""
+Hi {username},
+
+Your SirVerse GPT verification code is: {otp}
+It expires in {OTP_EXP_MINUTES} minutes.
+
+Regards,
+SirVerse GPT Team
+""")
+            msg["Subject"] = "SirVerse GPT - Email OTP Verification"
+            msg["From"] = f"SirVerse GPT <{sender}>"
+            msg["To"] = email
+
+            server = smtplib.SMTP("smtp.gmail.com", 587)
+            server.starttls()
+            server.login(sender, password)
+            server.sendmail(sender, [email], msg.as_string())
+            server.quit()
+            print(f"✅ OTP sent via Gmail to {email}")
+            return True
+    except Exception as e:
+        print(f"Gmail fallback failed: {e}")
+    
+    # Final fallback: Development mode
+    print(f"📧 [DEVELOPMENT MODE] OTP for {email}: {otp}")
+    return True
 
 # ------------------------------------------------
 # Models
@@ -131,7 +277,6 @@ class Post(db.Model):
     comments = db.relationship("Comment", backref="post", cascade="all,delete-orphan", lazy=True)
     likes = db.relationship("Like", backref="post", cascade="all,delete-orphan", lazy=True)
 
-
 class Comment(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     post_id = db.Column(db.Integer, db.ForeignKey("post.id"), nullable=False)
@@ -139,7 +284,6 @@ class Comment(db.Model):
     content = db.Column(db.Text, nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     user = db.relationship("User", lazy=True)
-
 
 class Like(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -175,15 +319,11 @@ class ReelComment(db.Model):
     user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
     content = db.Column(db.Text, nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
-
     user = db.relationship("User", lazy=True)
-
-
 
 # ------------------------------------------------
 # Moderation Models (Add after existing models)
 # ------------------------------------------------
-
 class Block(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     blocker_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
@@ -200,13 +340,11 @@ class Report(db.Model):
     description = db.Column(db.Text)
     status = db.Column(db.String(20), default='pending')  # pending, reviewed, resolved
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    
     reporter = db.relationship("User", foreign_keys=[reporter_id])
 
 # ------------------------------------------------
 # Legal/Content Models
 # ------------------------------------------------
-
 class TermsOfService(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     version = db.Column(db.String(20), nullable=False)
@@ -221,7 +359,7 @@ class PrivacyPolicy(db.Model):
     active = db.Column(db.Boolean, default=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
-    # ------------------------------------------------
+# ------------------------------------------------
 # Chat System (Phase 1)
 # ------------------------------------------------
 class ChatRoom(db.Model):
@@ -245,20 +383,27 @@ class Message(db.Model):
     content = db.Column(db.Text, nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
-
-    # ------------------------------------------------
+# ------------------------------------------------
 # Follow System Models
 # ------------------------------------------------
-
 class Follow(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     follower_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
     following_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     __table_args__ = (db.UniqueConstraint("follower_id", "following_id", name="_user_follow_unique"),)
-
     follower = db.relationship("User", foreign_keys=[follower_id])
     following = db.relationship("User", foreign_keys=[following_id])
+
+# ------------------------------------------------
+# AI History Model
+# ------------------------------------------------
+class AIHistory(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("user.id"))
+    role = db.Column(db.String(10))           # "user" or "sirG"
+    message = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 # --- serializers ---
 def message_dict(m):
@@ -292,124 +437,6 @@ def room_dict(r, current_user_id=None):
         "last_message": last_msg,
         "created_at": r.created_at.isoformat(),
     }
-
-# --- API endpoints ---
-@app.route("/api/chats", methods=["GET"])
-@jwt_required()
-def get_user_chats():
-    uid = int(get_jwt_identity())
-    parts = ChatParticipant.query.filter_by(user_id=uid).all()
-    rooms = [ChatRoom.query.get(p.room_id) for p in parts if p.room_id]
-    return jsonify({"rooms": [room_dict(r, current_user_id=uid) for r in rooms if r]}), 200
-
-@app.route("/api/chats/<int:room_id>/messages", methods=["GET"])
-@jwt_required()
-def get_room_messages(room_id):
-    uid = int(get_jwt_identity())
-    if not ChatParticipant.query.filter_by(room_id=room_id, user_id=uid).first():
-        return jsonify({"error": "Unauthorized"}), 403
-    msgs = Message.query.filter_by(room_id=room_id).order_by(Message.created_at.asc()).all()
-    return jsonify({"messages": [message_dict(m) for m in msgs]}), 200
-
-@app.route("/api/chats/create_room", methods=["POST"])
-@jwt_required()
-def create_room():
-    uid = int(get_jwt_identity())
-    data = request.get_json() or {}
-
-    # --- Get identifiers ---
-    other = data.get("other_user_id")
-    username = data.get("username")
-    phone = data.get("phone")
-
-    # --- Find the other user (ID, username, or phone) ---
-    other_user = None
-    if other:
-        other_user = User.query.get(int(other))
-    elif username:
-        other_user = User.query.filter_by(username=username).first()
-    elif phone:
-        other_user = User.query.filter_by(phone=phone).first()
-
-    if not other_user:
-        return jsonify({"error": "User not found"}), 404
-
-    # --- Prevent duplicate rooms ---
-    existing = ChatRoom.query.filter_by(is_group=False).all()
-    for r in existing:
-        ids = [p.user_id for p in r.participants]
-        if set(ids) == set([uid, other_user.id]):
-            return jsonify({"room": room_dict(r, uid)}), 200
-
-    # --- Create new private room ---
-    r = ChatRoom(is_group=False)
-    db.session.add(r)
-    db.session.commit()
-
-    db.session.add(ChatParticipant(room_id=r.id, user_id=uid))
-    db.session.add(ChatParticipant(room_id=r.id, user_id=other_user.id))
-    db.session.commit()
-
-    return jsonify({"room": room_dict(r, uid)}), 201
-
-
-# --- SocketIO handlers ---
-def _get_user_id_from_token(token):
-    try:
-        d = decode_token(token)
-        return int(d.get("sub") or d.get("identity"))
-    except Exception:
-        return None
-
-@socketio.on("connect")
-def on_connect(auth):
-    sid = request.sid
-    token = (auth or {}).get("token")
-    print("🟢 CONNECT EVENT - SID:", sid, "| token:", token)
-    uid = _get_user_id_from_token(token)
-    if not uid:
-        print("❌ Invalid or missing token during connect.")
-        return False  # reject connection
-    connected_users[sid] = uid
-    emit("user_online", {"user_id": uid}, broadcast=True)
-    print(f"✅ user {uid} connected via socket.")
-
-    sid = request.sid
-    token = (auth or {}).get("token")
-    uid = _get_user_id_from_token(token)
-    if not uid:
-        return False  # reject
-    connected_users[sid] = uid
-    emit("user_online", {"user_id": uid}, broadcast=True)
-    print(f"✅ user {uid} connected")
-
-@socketio.on("disconnect")
-def on_disconnect():
-    sid = request.sid
-    uid = connected_users.pop(sid, None)
-    if uid:
-        emit("user_offline", {"user_id": uid}, broadcast=True)
-        print(f"❌ user {uid} disconnected")
-
-@socketio.on("join_room")
-def on_join(data):
-    room = str(data.get("room"))
-    join_room(room)
-    emit("joined_room", {"room": room}, room=room)
-
-@socketio.on("send_message")
-def on_send(data):
-    sid = request.sid
-    uid = connected_users.get(sid)
-    room = int(data.get("room"))
-    text = (data.get("content") or "").strip()
-    if not text:
-        return
-    msg = Message(room_id=room, sender_id=uid, content=text)
-    db.session.add(msg); db.session.commit()
-    emit("receive_message", message_dict(msg), room=str(room))
-# ------------------------------------------------
-
 
 # ------------------------------------------------
 # Time helpers & serializers
@@ -489,7 +516,6 @@ def reel_comment_dict(c):
         commenter = {"id": None, "username": "Unknown User", "avatar": "👤"}
     else:
         commenter = {"id": c.user.id, "username": c.user.username, "avatar": c.user.avatar or "👤"}
-
     return {
         "id": c.id,
         "reel_id": c.reel_id,
@@ -500,13 +526,9 @@ def reel_comment_dict(c):
         "created_at_pk_human": human,
     }
 
-
 # ------------------------------------------------
-# AUTH: EMAIL OTP send & verify (FINAL FIXED)
+# AUTH: EMAIL OTP send & verify (UPDATED WITH SENDPULSE)
 # ------------------------------------------------
-from email.mime.text import MIMEText
-import smtplib
-
 @app.route("/api/auth/send_otp", methods=["POST"])
 def send_otp():
     data = request.get_json() or {}
@@ -538,35 +560,14 @@ def send_otp():
     user.otp_attempts = (user.otp_attempts or 0) + 1
     db.session.commit()
 
-    # Send OTP via Gmail
-    sender = os.getenv("GMAIL_USER")
-    password = os.getenv("GMAIL_PASS")
+    # Send OTP via SendPulse (with fallbacks)
+    email_sent = send_otp_email_final(email, username, otp)
 
-    msg = MIMEText(f"""
-Hi {username},
-
-Your SirVerse GPT verification code is: {otp}
-It expires in 5 minutes.
-
-Regards,
-SirVerse GPT Team
-""")
-    msg["Subject"] = "SirVerse GPT - Email OTP Verification"
-    msg["From"] = f"SirVerse GPT <{sender}>"
-    msg["To"] = email
-
-    try:
-        server = smtplib.SMTP("smtp.gmail.com", 587)
-        server.starttls()
-        server.login(sender, password)
-        server.sendmail(sender, [email], msg.as_string())
-        server.quit()
+    if email_sent:
         print(f"📧 OTP sent to {email} (code: {otp})")
         return jsonify({"message": "OTP sent to email"}), 200
-    except Exception as e:
-        print("Email send error:", e)
+    else:
         return jsonify({"error": "Failed to send OTP"}), 500
-
 
 @app.route("/api/auth/verify_otp", methods=["POST"])
 def verify_otp():
@@ -600,6 +601,111 @@ def verify_otp():
         db.session.commit()
         return jsonify({"error": "Invalid OTP"}), 401
 
+# --- SocketIO handlers ---
+def _get_user_id_from_token(token):
+    try:
+        d = decode_token(token)
+        return int(d.get("sub") or d.get("identity"))
+    except Exception:
+        return None
+
+@socketio.on("connect")
+def on_connect(auth):
+    sid = request.sid
+    token = (auth or {}).get("token")
+    print("🟢 CONNECT EVENT - SID:", sid, "| token:", token)
+    uid = _get_user_id_from_token(token)
+    if not uid:
+        print("❌ Invalid or missing token during connect.")
+        return False  # reject connection
+    connected_users[sid] = uid
+    emit("user_online", {"user_id": uid}, broadcast=True)
+    print(f"✅ user {uid} connected via socket.")
+
+@socketio.on("disconnect")
+def on_disconnect():
+    sid = request.sid
+    uid = connected_users.pop(sid, None)
+    if uid:
+        emit("user_offline", {"user_id": uid}, broadcast=True)
+        print(f"❌ user {uid} disconnected")
+
+@socketio.on("join_room")
+def on_join(data):
+    room = str(data.get("room"))
+    join_room(room)
+    emit("joined_room", {"room": room}, room=room)
+
+@socketio.on("send_message")
+def on_send(data):
+    sid = request.sid
+    uid = connected_users.get(sid)
+    room = int(data.get("room"))
+    text = (data.get("content") or "").strip()
+    if not text:
+        return
+    msg = Message(room_id=room, sender_id=uid, content=text)
+    db.session.add(msg); db.session.commit()
+    emit("receive_message", message_dict(msg), room=str(room))
+
+# --- API endpoints ---
+@app.route("/api/chats", methods=["GET"])
+@jwt_required()
+def get_user_chats():
+    uid = int(get_jwt_identity())
+    parts = ChatParticipant.query.filter_by(user_id=uid).all()
+    rooms = [ChatRoom.query.get(p.room_id) for p in parts if p.room_id]
+    return jsonify({"rooms": [room_dict(r, current_user_id=uid) for r in rooms if r]}), 200
+
+@app.route("/api/chats/<int:room_id>/messages", methods=["GET"])
+@jwt_required()
+def get_room_messages(room_id):
+    uid = int(get_jwt_identity())
+    if not ChatParticipant.query.filter_by(room_id=room_id, user_id=uid).first():
+        return jsonify({"error": "Unauthorized"}), 403
+    msgs = Message.query.filter_by(room_id=room_id).order_by(Message.created_at.asc()).all()
+    return jsonify({"messages": [message_dict(m) for m in msgs]}), 200
+
+@app.route("/api/chats/create_room", methods=["POST"])
+@jwt_required()
+def create_room():
+    uid = int(get_jwt_identity())
+    data = request.get_json() or {}
+
+    # --- Get identifiers ---
+    other = data.get("other_user_id")
+    username = data.get("username")
+    phone = data.get("phone")
+
+    # --- Find the other user (ID, username, or phone) ---
+    other_user = None
+    if other:
+        other_user = User.query.get(int(other))
+    elif username:
+        other_user = User.query.filter_by(username=username).first()
+    elif phone:
+        other_user = User.query.filter_by(phone=phone).first()
+
+    if not other_user:
+        return jsonify({"error": "User not found"}), 404
+
+    # --- Prevent duplicate rooms ---
+    existing = ChatRoom.query.filter_by(is_group=False).all()
+    for r in existing:
+        ids = [p.user_id for p in r.participants]
+        if set(ids) == set([uid, other_user.id]):
+            return jsonify({"room": room_dict(r, uid)}), 200
+
+    # --- Create new private room ---
+    r = ChatRoom(is_group=False)
+    db.session.add(r)
+    db.session.commit()
+
+    db.session.add(ChatParticipant(room_id=r.id, user_id=uid))
+    db.session.add(ChatParticipant(room_id=r.id, user_id=other_user.id))
+    db.session.commit()
+
+    return jsonify({"room": room_dict(r, uid)}), 201
 
 # ------------------------------------------------
 # Posts CRUD + upload
@@ -682,8 +788,6 @@ def upload_file():
     except Exception as e:
         print("❌ Upload failed:", e)
         return jsonify({"error": "Upload failed"}), 500
-    
-
 
     # ======== ADD BLOCK ENDPOINTS ========
 @app.route('/api/blocks/<int:user_id>', methods=['POST'])
@@ -1001,7 +1105,6 @@ def get_reel_comments(reel_id):
     cmts = ReelComment.query.filter_by(reel_id=reel_id).order_by(ReelComment.created_at.asc()).all()
     return jsonify({"comments": [reel_comment_dict(c) for c in cmts]}), 200
 
-
 @app.route("/api/reels/<int:reel_id>/comments", methods=["POST"])
 @jwt_required()
 def add_reel_comment(reel_id):
@@ -1090,6 +1193,7 @@ def get_profile(username):
         "posts": [post_dict(p) for p in posts],
         "reels": [reel_dict(r) for r in reels]
     }), 200
+
 # ------------------------------------------------
 # Update user profile (Phase 3)
 # ------------------------------------------------
@@ -1173,11 +1277,10 @@ def get_user_stats():
         "total_engagement": posts_count + reels_count + comments_count + likes_received + reel_likes_received
     }), 200
 
-
 # ------------------------------------------------
 # 🤖 Sir G — Dual Cloud (Groq + Hugging Face)
 # ------------------------------------------------
-import requests, time, hashlib
+import time
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 GROQ_MODEL = os.getenv("GROQ_MODEL", "llama3-8b-instant")
@@ -1187,17 +1290,14 @@ HF_MODEL = os.getenv("HF_MODEL", "meta-llama/Meta-Llama-3-8B-Instruct")
 SIRG_CACHE = {}
 CACHE_TTL = 3600  # 1 hour
 
-
 def get_cache(key):
     v = SIRG_CACHE.get(key)
     if v and time.time() - v["t"] < CACHE_TTL:
         return v["r"]
     return None
 
-
 def set_cache(key, reply):
     SIRG_CACHE[key] = {"r": reply, "t": time.time()}
-
 
 def query_groq(prompt):
     url = "https://api.groq.com/openai/v1/chat/completions"
@@ -1214,7 +1314,6 @@ def query_groq(prompt):
         return j["choices"][0]["message"]["content"].strip()
     raise Exception(j.get("error", j))
 
-
 def query_hf(prompt):
     url = f"https://api-inference.huggingface.co/models/{HF_MODEL}"
     headers = {"Authorization": f"Bearer {HF_API_KEY}", "Content-Type": "application/json"}
@@ -1226,7 +1325,6 @@ def query_hf(prompt):
     if isinstance(j, dict) and "error" in j:
         raise Exception(j["error"])
     return str(j)
-
 
 @app.route("/api/sirg", methods=["POST"])
 @jwt_required(optional=True)
@@ -1270,17 +1368,9 @@ def sirg_chat():
 
     return jsonify({"error": "No AI provider available"}), 502
 
-
 # ------------------------------------------------
 # 💬 Sir G Chat History (save / get / delete)
 # ------------------------------------------------
-class AIHistory(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, db.ForeignKey("user.id"))
-    role = db.Column(db.String(10))           # "user" or "sirG"
-    message = db.Column(db.Text)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-
 @app.route("/api/ai/history", methods=["GET"])
 @jwt_required()
 def get_ai_history():
@@ -1293,7 +1383,6 @@ def get_ai_history():
         for m in msgs
     ]), 200
 
-
 @app.route("/api/ai/history", methods=["POST"])
 @jwt_required()
 def save_ai_message():
@@ -1305,7 +1394,6 @@ def save_ai_message():
     db.session.commit()
     return jsonify({"ok": True}), 201
 
-
 @app.route("/api/ai/history", methods=["DELETE"])
 @jwt_required()
 def clear_ai_history():
@@ -1314,18 +1402,6 @@ def clear_ai_history():
     db.session.commit()
     return jsonify({"message": "History cleared"}), 200
 
-# ... your existing AI History code ...
-
-@app.route("/api/ai/history", methods=["DELETE"])
-@jwt_required()
-def delete_ai_history():
-    uid = int(get_jwt_identity())
-    AIHistory.query.filter_by(user_id=uid).delete()
-    db.session.commit()
-    return jsonify({"message": "History cleared"}), 200
-
-
-# ======== CONTINUE WITH EXISTING CODE ========
 # ------------------------------------------------
 # Ping
 # ------------------------------------------------
@@ -1336,7 +1412,6 @@ def ping():
 # ------------------------------------------------
 # Default Legal Content Creation
 # ------------------------------------------------
-
 def create_default_legal_content():
     """Create default terms and privacy policy if none exist"""
     try:
@@ -1370,13 +1445,9 @@ def create_default_legal_content():
         print(f"⚠️ Warning: Could not create default legal content: {e}")
         db.session.rollback()
 
-
-# Ensure backend/routes/__init__.py exists
-#from routes.note_routes import note_bp
-#app.register_blueprint(note_bp)
+# Register blueprints
 app.register_blueprint(moderation_bp)
 app.register_blueprint(legal_bp)
-
 
 if __name__ == "__main__":
     print("🚀 SirVerse GPT backend running in THREADING mode (production-safe)")

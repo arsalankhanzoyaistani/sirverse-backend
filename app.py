@@ -34,9 +34,9 @@ app = Flask(__name__)
 db_url = os.getenv("DATABASE_URL")
 
 if db_url and db_url.startswith("postgres://"):
-    db_url = db_url.replace("postgres://", "postgresql+psycopg://", 1)
+    db_url = db_url.replace("postgres://", "postgresql+psycopg2://")
 elif db_url and db_url.startswith("postgresql://"):
-    db_url = db_url.replace("postgresql://", "postgresql+psycopg://", 1)
+    db_url = db_url.replace("postgresql://", "postgresql+psycopg2://", 1)
 
 app.config.update(
     SECRET_KEY=os.getenv("SECRET_KEY", "change-this"),

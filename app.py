@@ -30,18 +30,18 @@ load_dotenv(dotenv_path=Path(__file__).resolve().parent.parent / ".env")
 # ------------------------------------------------
 app = Flask(__name__)
 
-# ✅ FIX: Use psycopg (PostgreSQL v3 driver) instead of psycopg2
+## ✅ NEW CODE (using psycopg2):
 db_url = os.getenv("DATABASE_URL")
 
 if db_url and db_url.startswith("postgres://"):
-    db_url = db_url.replace("postgres://", "postgresql+psycopg2://")
+    db_url = db_url.replace("postgres://", "postgresql+psycopg2://", 1)
 elif db_url and db_url.startswith("postgresql://"):
     db_url = db_url.replace("postgresql://", "postgresql+psycopg2://", 1)
 
 app.config.update(
     SECRET_KEY=os.getenv("SECRET_KEY", "change-this"),
     JWT_SECRET_KEY=os.getenv("JWT_SECRET_KEY", "jwt-change-this"),
-    SQLALCHEMY_DATABASE_URI=db_url or "postgresql+psycopg://sirverse_user:sirverse123@localhost:5432/sirverse_gpt_db",
+    SQLALCHEMY_DATABASE_URI=db_url or "postgresql+psycopg2://sirverse_user:sirverse123@localhost:5432/sirverse_gpt_db",
     SQLALCHEMY_TRACK_MODIFICATIONS=False
 )
 

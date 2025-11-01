@@ -1,4 +1,9 @@
 # backend/app.py
+# Add this at the VERY TOP of app.py - before any other imports
+import eventlet
+eventlet.monkey_patch()
+
+# Then your existing imports...
 import os, sys, random, hashlib
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -8,8 +13,6 @@ from flask_cors import CORS
 from flask_jwt_extended import (
     JWTManager, create_access_token, jwt_required, get_jwt_identity, decode_token
 )
-from routes.moderation import moderation_bp
-from routes.legal import legal_bp
 from flask_migrate import Migrate
 from sqlalchemy import desc
 from pytz import timezone, UTC
@@ -19,13 +22,12 @@ import cloudinary.uploader
 
 load_dotenv()
 
-#app = Flask(__name__)
-#CORS(app)
-#jwt = JWTManager(app)
-#socketio = SocketIO(app, cors_allowed_origins="*")
+app = Flask(__name__)
+CORS(app)
+jwt = JWTManager(app)
+socketio = SocketIO(app, cors_allowed_origins="*")
 
-# (then rest of your backend code)
-
+# (rest of your backend code continues...)
 
 
 # (rest of your app.py continues below...)
@@ -39,19 +41,17 @@ load_dotenv(dotenv_path=Path(__file__).resolve().parent.parent / ".env")
 # ------------------------------------------------
 app = Flask(__name__)
 
-# ✅ FIX: Use psycopg (PostgreSQL v3 driver) instead of psycopg2
+# fix DATABASE_URL prefix if needed (Railway etc.)
 db_url = os.getenv("DATABASE_URL")
-
 if db_url and db_url.startswith("postgres://"):
-    db_url = db_url.replace("postgres://", "postgresql+psycopg://", 1)
+    db_url = db_url.replace("postgres://", "postgresql+psycopg2://", 1)
 elif db_url and db_url.startswith("postgresql://"):
-    db_url = db_url.replace("postgresql://", "postgresql+psycopg://", 1)
-
+    db_url = db_url.replace("postgresql://", "postgresql+psycopg2://", 1)
 
 app.config.update(
     SECRET_KEY=os.getenv("SECRET_KEY", "change-this"),
     JWT_SECRET_KEY=os.getenv("JWT_SECRET_KEY", "jwt-change-this"),
-    SQLALCHEMY_DATABASE_URI=db_url or "postgresql+psycopg://sirverse_user:sirverse123@localhost:5432/sirverse_gpt_db",
+    SQLALCHEMY_DATABASE_URI=db_url or "postgresql+psycopg2://sirverse_user:sirverse123@localhost:5432/sirverse_gpt_db",
     SQLALCHEMY_TRACK_MODIFICATIONS=False
 )
 
@@ -68,14 +68,22 @@ from config.database import init_db, db
 init_db(app)                  # sets up db = SQLAlchemy(app) inside your config
 migrate = Migrate(app, db)
 jwt = JWTManager(app)
-# REPLACE whatever CORS you have with this:
-CORS(app, resources={r"/api/*": {"origins": "*"}}, supports_credentials=True)
+# REPLACE it with:
+CORS(app, resources={
+    r"/api/*": {
+        "origins": [
+            "http://localhost:3000",
+            "https://sirverse-frontend.vercel.app",  # Your Vercel frontend
+            "https://sirversegpt1.netlify.app"       # Your Netlify frontend (optional)
+        ],
+        "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        "allow_headers": ["Content-Type", "Authorization", "X-Requested-With"],
+        "supports_credentials": True
+    }
+})
 # --- SocketIO setup ---
-# ✅ Fixed SocketIO threading mode (permanent solution)
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode="eventlet")
 connected_users = {}  # sid -> user_id mapping for online tracking
-# -----------------------
-
 # -----------------------
 
 
@@ -179,48 +187,6 @@ class ReelComment(db.Model):
     user = db.relationship("User", lazy=True)
 
 
-
-# ------------------------------------------------
-# Moderation Models (Add after existing models)
-# ------------------------------------------------
-
-class Block(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    blocker_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
-    blocked_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    __table_args__ = (db.UniqueConstraint("blocker_id", "blocked_id", name="_user_block_unique"),)
-
-class Report(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    reporter_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
-    content_type = db.Column(db.String(20), nullable=False)  # 'post', 'reel', 'comment', 'user'
-    content_id = db.Column(db.Integer, nullable=False)
-    reason = db.Column(db.String(200), nullable=False)
-    description = db.Column(db.Text)
-    status = db.Column(db.String(20), default='pending')  # pending, reviewed, resolved
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    
-    reporter = db.relationship("User", foreign_keys=[reporter_id])
-
-# ------------------------------------------------
-# Legal/Content Models
-# ------------------------------------------------
-
-class TermsOfService(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    version = db.Column(db.String(20), nullable=False)
-    content = db.Column(db.Text, nullable=False)
-    active = db.Column(db.Boolean, default=True)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-
-class PrivacyPolicy(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    version = db.Column(db.String(20), nullable=False)
-    content = db.Column(db.Text, nullable=False)
-    active = db.Column(db.Boolean, default=True)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-
     # ------------------------------------------------
 # Chat System (Phase 1)
 # ------------------------------------------------
@@ -246,19 +212,55 @@ class Message(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 
-    # ------------------------------------------------
-# Follow System Models
-# ------------------------------------------------
+# Add to your existing models in app.py
 
+# ------------------------------------------------
+# Follow System
+# ------------------------------------------------
 class Follow(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     follower_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
     following_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    __table_args__ = (db.UniqueConstraint("follower_id", "following_id", name="_user_follow_unique"),)
+    
+    __table_args__ = (db.UniqueConstraint("follower_id", "following_id", name="_follower_following_unique"),)
+    
+    follower = db.relationship("User", foreign_keys=[follower_id], backref="following")
+    following = db.relationship("User", foreign_keys=[following_id], backref="followers")
 
-    follower = db.relationship("User", foreign_keys=[follower_id])
-    following = db.relationship("User", foreign_keys=[following_id])
+# ------------------------------------------------
+# Block System
+# ------------------------------------------------
+class Block(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    blocker_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
+    blocked_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    __table_args__ = (db.UniqueConstraint("blocker_id", "blocked_id", name="_blocker_blocked_unique"),)
+    
+    blocker = db.relationship("User", foreign_keys=[blocker_id])
+    blocked = db.relationship("User", foreign_keys=[blocked_id])
+# ------------------------------------------------
+# Report System Models
+# ------------------------------------------------
+class Report(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    reporter_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
+    reported_user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=True)
+    reported_post_id = db.Column(db.Integer, db.ForeignKey("post.id"), nullable=True)
+    reported_reel_id = db.Column(db.Integer, db.ForeignKey("reel.id"), nullable=True)
+    report_type = db.Column(db.String(50), nullable=False)
+    description = db.Column(db.Text, nullable=True)
+    status = db.Column(db.String(20), default="pending")  # pending, reviewed, resolved, rejected
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    # Relationships
+    reporter = db.relationship("User", foreign_keys=[reporter_id], backref="reports_made")
+    reported_user = db.relationship("User", foreign_keys=[reported_user_id], backref="reports_received")
+    reported_post = db.relationship("Post", foreign_keys=[reported_post_id])
+    reported_reel = db.relationship("Reel", foreign_keys=[reported_reel_id])
+
 
 # --- serializers ---
 def message_dict(m):
@@ -599,6 +601,657 @@ def verify_otp():
         user.otp_attempts = (user.otp_attempts or 0) + 1
         db.session.commit()
         return jsonify({"error": "Invalid OTP"}), 401
+    
+
+    # ------------------------------------------------
+
+# ------------------------------------------------
+# Follow/Unfollow System
+# ------------------------------------------------
+@app.route("/api/users/<int:user_id>/follow", methods=["POST"])
+@jwt_required()
+def follow_user(user_id):
+    current_user_id = int(get_jwt_identity())
+    
+    if current_user_id == user_id:
+        return jsonify({"error": "Cannot follow yourself"}), 400
+    
+    user_to_follow = User.query.get_or_404(user_id)
+    
+    # Check if already following
+    existing_follow = Follow.query.filter_by(
+        follower_id=current_user_id, 
+        following_id=user_id
+    ).first()
+    
+    if existing_follow:
+        return jsonify({"error": "Already following this user"}), 400
+    
+    # Create follow relationship
+    follow = Follow(follower_id=current_user_id, following_id=user_id)
+    db.session.add(follow)
+    db.session.commit()
+    
+    return jsonify({
+        "message": f"Started following {user_to_follow.username}",
+        "following": True,
+        "followers_count": Follow.query.filter_by(following_id=user_id).count(),
+        "following_count": Follow.query.filter_by(follower_id=current_user_id).count()
+    }), 201
+
+@app.route("/api/users/<int:user_id>/unfollow", methods=["POST"])
+@jwt_required()
+def unfollow_user(user_id):
+    current_user_id = int(get_jwt_identity())
+    
+    if current_user_id == user_id:
+        return jsonify({"error": "Cannot unfollow yourself"}), 400
+    
+    # Find and delete follow relationship
+    follow = Follow.query.filter_by(
+        follower_id=current_user_id, 
+        following_id=user_id
+    ).first_or_404()
+    
+    db.session.delete(follow)
+    db.session.commit()
+    
+    user_to_unfollow = User.query.get(user_id)
+    
+    return jsonify({
+        "message": f"Unfollowed {user_to_unfollow.username}",
+        "following": False,
+        "followers_count": Follow.query.filter_by(following_id=user_id).count(),
+        "following_count": Follow.query.filter_by(follower_id=current_user_id).count()
+    }), 200
+
+@app.route("/api/users/<int:user_id>/follow_status", methods=["GET"])
+@jwt_required()
+def get_follow_status(user_id):
+    current_user_id = int(get_jwt_identity())
+    
+    is_following = Follow.query.filter_by(
+        follower_id=current_user_id, 
+        following_id=user_id
+    ).first() is not None
+    
+    is_blocked = Block.query.filter_by(
+        blocker_id=current_user_id,
+        blocked_id=user_id
+    ).first() is not None
+    
+    followers_count = Follow.query.filter_by(following_id=user_id).count()
+    following_count = Follow.query.filter_by(follower_id=user_id).count()
+    
+    return jsonify({
+        "is_following": is_following,
+        "is_blocked": is_blocked,
+        "followers_count": followers_count,
+        "following_count": following_count
+    }), 200
+
+
+
+# ------------------------------------------------
+# Block/Unblock System
+# ------------------------------------------------
+@app.route("/api/users/<int:user_id>/block", methods=["POST"])
+@jwt_required()
+def block_user(user_id):
+    current_user_id = int(get_jwt_identity())
+    
+    if current_user_id == user_id:
+        return jsonify({"error": "Cannot block yourself"}), 400
+    
+    user_to_block = User.query.get_or_404(user_id)
+    
+    # Check if already blocked
+    existing_block = Block.query.filter_by(
+        blocker_id=current_user_id, 
+        blocked_id=user_id
+    ).first()
+    
+    if existing_block:
+        return jsonify({"error": "User already blocked"}), 400
+    
+    # Remove follow relationships if they exist
+    Follow.query.filter_by(follower_id=current_user_id, following_id=user_id).delete()
+    Follow.query.filter_by(follower_id=user_id, following_id=current_user_id).delete()
+    
+    # Create block relationship
+    block = Block(blocker_id=current_user_id, blocked_id=user_id)
+    db.session.add(block)
+    db.session.commit()
+    
+    return jsonify({
+        "message": f"Blocked {user_to_block.username}",
+        "blocked": True
+    }), 201
+
+@app.route("/api/users/<int:user_id>/unblock", methods=["POST"])
+@jwt_required()
+def unblock_user(user_id):
+    current_user_id = int(get_jwt_identity())
+    
+    block = Block.query.filter_by(
+        blocker_id=current_user_id, 
+        blocked_id=user_id
+    ).first_or_404()
+    
+    db.session.delete(block)
+    db.session.commit()
+    
+    user_to_unblock = User.query.get(user_id)
+    
+    return jsonify({
+        "message": f"Unblocked {user_to_unblock.username}",
+        "blocked": False
+    }), 200
+
+@app.route("/api/users/blocked", methods=["GET"])
+@jwt_required()
+def get_blocked_users():
+    current_user_id = int(get_jwt_identity())
+    
+    blocked_users = Block.query.filter_by(blocker_id=current_user_id).all()
+    
+    blocked_list = []
+    for block in blocked_users:
+        user = User.query.get(block.blocked_id)
+        blocked_list.append({
+            "id": user.id,
+            "username": user.username,
+            "avatar": user.avatar,
+            "blocked_at": block.created_at.isoformat()
+        })
+    
+    return jsonify({"blocked_users": blocked_list}), 200
+
+
+# ------------------------------------------------
+# Report System API Routes
+# ------------------------------------------------
+
+@app.route("/api/report", methods=["POST"])
+@jwt_required()
+def create_report():
+    """
+    Create a new report for a user, post, or reel
+    """
+    current_user_id = int(get_jwt_identity())
+    data = request.get_json() or {}
+    
+    print(f"🔍 [DEBUG] Report endpoint called by user {current_user_id}")
+    print(f"📋 [DEBUG] Report data: {data}")
+    
+    report_type = data.get("report_type")
+    description = data.get("description", "").strip()
+    reported_user_id = data.get("reported_user_id")
+    reported_post_id = data.get("reported_post_id")
+    reported_reel_id = data.get("reported_reel_id")
+    
+    if not report_type:
+        print("❌ [DEBUG] No report type provided")
+        return jsonify({"error": "Report type is required"}), 400
+    
+    # Validate that at least one entity is reported
+    if not any([reported_user_id, reported_post_id, reported_reel_id]):
+        print("❌ [DEBUG] No entity to report")
+        return jsonify({"error": "Must report a user, post, or reel"}), 400
+    
+    # Convert to integers and handle None values properly
+    try:
+        reported_user_id = int(reported_user_id) if reported_user_id else None
+        reported_post_id = int(reported_post_id) if reported_post_id else None
+        reported_reel_id = int(reported_reel_id) if reported_reel_id else None
+    except (TypeError, ValueError) as e:
+        print(f"❌ [DEBUG] Error converting IDs: {e}")
+        return jsonify({"error": "Invalid ID format"}), 400
+    
+    print(f"🔍 [DEBUG] Processed IDs - User: {reported_user_id}, Post: {reported_post_id}, Reel: {reported_reel_id}")
+    
+    # Validate the reported entities exist
+    if reported_user_id:
+        user = User.query.get(reported_user_id)
+        if not user:
+            print(f"❌ [DEBUG] Reported user {reported_user_id} not found")
+            return jsonify({"error": "Reported user not found"}), 404
+        print(f"✅ [DEBUG] User {reported_user_id} exists: {user.username}")
+    
+    if reported_post_id:
+        post = Post.query.get(reported_post_id)
+        if not post:
+            print(f"❌ [DEBUG] Reported post {reported_post_id} not found")
+            return jsonify({"error": "Reported post not found"}), 404
+        print(f"✅ [DEBUG] Post {reported_post_id} exists")
+    
+    if reported_reel_id:
+        reel = Reel.query.get(reported_reel_id)
+        if not reel:
+            print(f"❌ [DEBUG] Reported reel {reported_reel_id} not found")
+            return jsonify({"error": "Reported reel not found"}), 404
+        print(f"✅ [DEBUG] Reel {reported_reel_id} exists")
+    
+    # Check if similar report already exists from this user (within last 24 hours)
+    twenty_four_hours_ago = datetime.utcnow() - timedelta(hours=24)
+    
+    # Build the query properly - handle NULL values correctly
+    query = Report.query.filter(
+        Report.reporter_id == current_user_id,
+        Report.report_type == report_type,
+        Report.created_at >= twenty_four_hours_ago
+    )
+    
+    # Handle the NULL/None comparison properly for database
+    if reported_user_id is not None:
+        query = query.filter(Report.reported_user_id == reported_user_id)
+    else:
+        query = query.filter(Report.reported_user_id.is_(None))
+    
+    if reported_post_id is not None:
+        query = query.filter(Report.reported_post_id == reported_post_id)
+    else:
+        query = query.filter(Report.reported_post_id.is_(None))
+    
+    if reported_reel_id is not None:
+        query = query.filter(Report.reported_reel_id == reported_reel_id)
+    else:
+        query = query.filter(Report.reported_reel_id.is_(None))
+    
+    existing_report = query.first()
+    
+    if existing_report:
+        print(f"⚠️ [DEBUG] Duplicate report found: {existing_report.id}")
+        return jsonify({"error": "You have already reported this content recently. Please wait 24 hours before reporting again."}), 400
+    
+    print("✅ [DEBUG] No duplicate found, creating new report...")
+    
+    try:
+        report = Report(
+            reporter_id=current_user_id,
+            reported_user_id=reported_user_id,
+            reported_post_id=reported_post_id,
+            reported_reel_id=reported_reel_id,
+            report_type=report_type,
+            description=description,
+            status="pending"
+        )
+        
+        db.session.add(report)
+        db.session.commit()
+        
+        print(f"🎉 [DEBUG] Report created successfully! ID: {report.id}")
+        
+        # Log the report for admin review
+        print(f"🚨 NEW REPORT: User {current_user_id} reported {report_type}")
+        if reported_user_id:
+            reported_user = User.query.get(reported_user_id)
+            print(f"   - Reported User: {reported_user.username} (ID: {reported_user_id})")
+        if reported_post_id:
+            print(f"   - Reported Post: {reported_post_id}")
+        if reported_reel_id:
+            print(f"   - Reported Reel: {reported_reel_id}")
+        if description:
+            print(f"   - Description: {description}")
+        
+        return jsonify({
+            "message": "Report submitted successfully. Our team will review it shortly.",
+            "report_id": report.id
+        }), 201
+        
+    except Exception as e:
+        db.session.rollback()
+        print(f"💥 [DEBUG] Database error: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": "Failed to create report"}), 500
+
+@app.route("/api/report/types", methods=["GET"])
+@jwt_required(optional=True)
+def get_report_types():
+    """
+    Get all available report types
+    """
+    print("🔍 [DEBUG] Report types endpoint called")
+    
+    report_types = [
+        {"value": "spam", "label": "Spam"},
+        {"value": "harassment", "label": "Harassment or Bullying"},
+        {"value": "hate_speech", "label": "Hate Speech"},
+        {"value": "nudity", "label": "Nudity or Sexual Content"},
+        {"value": "violence", "label": "Violence or Harm"},
+        {"value": "false_info", "label": "False Information"},
+        {"value": "scam", "label": "Scam or Fraud"},
+        {"value": "intellectual_property", "label": "Intellectual Property Violation"},
+        {"value": "suicide_self_injury", "label": "Suicide or Self-Injury"},
+        {"value": "other", "label": "Other"}
+    ]
+    
+    print(f"✅ [DEBUG] Sending {len(report_types)} report types")
+    return jsonify({"report_types": report_types}), 200
+@app.route("/api/reports/my", methods=["GET"])
+@jwt_required()
+def get_my_reports():
+    """
+    Get all reports made by the current user
+    """
+    current_user_id = int(get_jwt_identity())
+    
+    reports = Report.query.filter_by(reporter_id=current_user_id)\
+        .order_by(desc(Report.created_at))\
+        .all()
+    
+    report_list = []
+    for report in reports:
+        report_data = {
+            "id": report.id,
+            "report_type": report.report_type,
+            "description": report.description,
+            "status": report.status,
+            "created_at": report.created_at.isoformat(),
+            "reported_content": {}
+        }
+        
+        # Add reported user info if exists
+        if report.reported_user_id:
+            user = User.query.get(report.reported_user_id)
+            if user:
+                report_data["reported_content"]["user"] = {
+                    "id": user.id,
+                    "username": user.username,
+                    "avatar": user.avatar
+                }
+        
+        # Add reported post info if exists
+        if report.reported_post_id:
+            post = Post.query.get(report.reported_post_id)
+            if post:
+                report_data["reported_content"]["post"] = {
+                    "id": post.id,
+                    "content_preview": post.content[:100] + "..." if post.content else None,
+                    "author_username": post.user.username if post.user else None
+                }
+        
+        # Add reported reel info if exists
+        if report.reported_reel_id:
+            reel = Reel.query.get(report.reported_reel_id)
+            if reel:
+                report_data["reported_content"]["reel"] = {
+                    "id": reel.id,
+                    "caption": reel.caption,
+                    "author_username": reel.user.username if reel.user else None
+                }
+        
+        report_list.append(report_data)
+    
+    return jsonify({"reports": report_list}), 200
+
+# ------------------------------------------------
+# Admin Report Management Routes
+# ------------------------------------------------
+
+@app.route("/api/admin/reports", methods=["GET"])
+@jwt_required()
+def get_all_reports():
+    """
+    Get all reports (admin only)
+    """
+    # In production, add proper admin authentication here
+    current_user_id = int(get_jwt_identity())
+    print(f"👮 Admin reports accessed by user {current_user_id}")
+    
+    # Get query parameters for filtering
+    status_filter = request.args.get("status", "all")
+    report_type_filter = request.args.get("type", "all")
+    
+    # Base query
+    query = Report.query
+    
+    # Apply filters
+    if status_filter != "all":
+        query = query.filter(Report.status == status_filter)
+    
+    if report_type_filter != "all":
+        query = query.filter(Report.report_type == report_type_filter)
+    
+    reports = query.order_by(desc(Report.created_at)).all()
+    
+    report_list = []
+    for report in reports:
+        reporter = User.query.get(report.reporter_id)
+        reported_user = User.query.get(report.reported_user_id) if report.reported_user_id else None
+        reported_post = Post.query.get(report.reported_post_id) if report.reported_post_id else None
+        reported_reel = Reel.query.get(report.reported_reel_id) if report.reported_reel_id else None
+        
+        report_data = {
+            "id": report.id,
+            "reporter": {
+                "id": reporter.id,
+                "username": reporter.username,
+                "avatar": reporter.avatar
+            } if reporter else None,
+            "reported_user": {
+                "id": reported_user.id,
+                "username": reported_user.username,
+                "avatar": reported_user.avatar
+            } if reported_user else None,
+            "reported_post": {
+                "id": reported_post.id,
+                "content_preview": reported_post.content[:100] + "..." if reported_post and reported_post.content else None,
+                "author_username": reported_post.user.username if reported_post and reported_post.user else None
+            } if reported_post else None,
+            "reported_reel": {
+                "id": reported_reel.id,
+                "caption": reported_reel.caption,
+                "author_username": reported_reel.user.username if reported_reel and reported_reel.user else None
+            } if reported_reel else None,
+            "report_type": report.report_type,
+            "description": report.description,
+            "status": report.status,
+            "created_at": report.created_at.isoformat(),
+            "created_at_pk": to_pk_time(report.created_at)[0],
+            "created_at_pk_human": to_pk_time(report.created_at)[1]
+        }
+        
+        report_list.append(report_data)
+    
+    return jsonify({
+        "reports": report_list,
+        "total": len(report_list),
+        "filters": {
+            "status": status_filter,
+            "type": report_type_filter
+        }
+    }), 200
+
+@app.route("/api/admin/reports/<int:report_id>", methods=["GET"])
+@jwt_required()
+def get_report_details(report_id):
+    """
+    Get detailed information about a specific report
+    """
+    report = Report.query.get_or_404(report_id)
+    
+    reporter = User.query.get(report.reporter_id)
+    reported_user = User.query.get(report.reported_user_id) if report.reported_user_id else None
+    reported_post = Post.query.get(report.reported_post_id) if report.reported_post_id else None
+    reported_reel = Reel.query.get(report.reported_reel_id) if report.reported_reel_id else None
+    
+    report_data = {
+        "id": report.id,
+        "reporter": {
+            "id": reporter.id,
+            "username": reporter.username,
+            "avatar": reporter.avatar,
+            "email": reporter.email
+        } if reporter else None,
+        "reported_user": {
+            "id": reported_user.id,
+            "username": reported_user.username,
+            "avatar": reported_user.avatar,
+            "email": reported_user.email
+        } if reported_user else None,
+        "reported_post": post_dict(reported_post) if reported_post else None,
+        "reported_reel": reel_dict(reported_reel) if reported_reel else None,
+        "report_type": report.report_type,
+        "description": report.description,
+        "status": report.status,
+        "created_at": report.created_at.isoformat(),
+        "created_at_pk": to_pk_time(report.created_at)[0],
+        "created_at_pk_human": to_pk_time(report.created_at)[1]
+    }
+    
+    return jsonify({"report": report_data}), 200
+
+@app.route("/api/admin/reports/<int:report_id>/status", methods=["PUT"])
+@jwt_required()
+def update_report_status(report_id):
+    """
+    Update report status (admin only)
+    """
+    report = Report.query.get_or_404(report_id)
+    data = request.get_json() or {}
+    
+    new_status = data.get("status")
+    if new_status not in ["pending", "reviewed", "resolved", "rejected"]:
+        return jsonify({"error": "Invalid status"}), 400
+    
+    report.status = new_status
+    db.session.commit()
+    
+    print(f"📝 Report {report_id} status updated to: {new_status}")
+    
+    return jsonify({
+        "message": f"Report status updated to {new_status}",
+        "report_id": report.id,
+        "status": report.status
+    }), 200
+
+@app.route("/api/admin/reports/<int:report_id>/resolve", methods=["POST"])
+@jwt_required()
+def resolve_report(report_id):
+    """
+    Mark report as resolved (admin only)
+    """
+    report = Report.query.get_or_404(report_id)
+    report.status = "resolved"
+    db.session.commit()
+    
+    print(f"✅ Report {report_id} marked as resolved")
+    
+    return jsonify({
+        "message": "Report marked as resolved",
+        "report_id": report.id,
+        "status": report.status
+    }), 200
+
+@app.route("/api/admin/reports/<int:report_id>/reject", methods=["POST"])
+@jwt_required()
+def reject_report(report_id):
+    """
+    Mark report as rejected (admin only)
+    """
+    report = Report.query.get_or_404(report_id)
+    report.status = "rejected"
+    db.session.commit()
+    
+    print(f"❌ Report {report_id} marked as rejected")
+    
+    return jsonify({
+        "message": "Report marked as rejected",
+        "report_id": report.id,
+        "status": report.status
+    }), 200
+
+@app.route("/api/admin/reports/stats", methods=["GET"])
+@jwt_required()
+def get_report_stats():
+    """
+    Get reporting statistics (admin only)
+    """
+    total_reports = Report.query.count()
+    pending_reports = Report.query.filter_by(status="pending").count()
+    resolved_reports = Report.query.filter_by(status="resolved").count()
+    rejected_reports = Report.query.filter_by(status="rejected").count()
+    
+    # Reports by type
+    reports_by_type = db.session.query(
+        Report.report_type,
+        db.func.count(Report.id)
+    ).group_by(Report.report_type).all()
+    
+    # Recent reports (last 7 days)
+    seven_days_ago = datetime.utcnow() - timedelta(days=7)
+    recent_reports = Report.query.filter(Report.created_at >= seven_days_ago).count()
+    
+    stats = {
+        "total_reports": total_reports,
+        "pending_reports": pending_reports,
+        "resolved_reports": resolved_reports,
+        "rejected_reports": rejected_reports,
+        "recent_reports_7d": recent_reports,
+        "reports_by_type": {report_type: count for report_type, count in reports_by_type},
+        "resolution_rate": round((resolved_reports / total_reports * 100), 2) if total_reports > 0 else 0
+    }
+    
+    return jsonify({"stats": stats}), 200
+
+# ------------------------------------------------
+# Privacy Policy & Terms
+# ------------------------------------------------
+@app.route("/api/privacy-policy", methods=["GET"])
+def get_privacy_policy():
+    policy = {
+        "title": "Privacy Policy",
+        "last_updated": "2024-01-01",
+        "sections": [
+            {
+                "title": "Information We Collect",
+                "content": "We collect information you provide directly to us, including your username, email address, profile information, and content you post."
+            },
+            {
+                "title": "How We Use Your Information",
+                "content": "We use your information to provide and improve our services, communicate with you, and ensure platform safety."
+            },
+            {
+                "title": "Data Sharing",
+                "content": "We do not sell your personal data. We may share information with service providers or when required by law."
+            },
+            {
+                "title": "Your Rights",
+                "content": "You can access, update, or delete your personal information through your account settings."
+            }
+        ]
+    }
+    return jsonify(policy), 200
+
+@app.route("/api/terms-of-service", methods=["GET"])
+def get_terms_of_service():
+    terms = {
+        "title": "Terms of Service",
+        "last_updated": "2024-01-01",
+        "sections": [
+            {
+                "title": "User Conduct",
+                "content": "You agree not to post illegal, harmful, or offensive content. Respect other users and their privacy."
+            },
+            {
+                "title": "Content Ownership",
+                "content": "You retain ownership of your content but grant us license to display and distribute it on our platform."
+            },
+            {
+                "title": "Account Termination",
+                "content": "We reserve the right to suspend or terminate accounts that violate our terms."
+            },
+            {
+                "title": "Limitation of Liability",
+                "content": "We are not liable for any indirect damages resulting from your use of our service."
+            }
+        ]
+    }
+    return jsonify(terms), 200
+# ------------------------------------------------
+
 
 
 # ------------------------------------------------
@@ -682,190 +1335,6 @@ def upload_file():
     except Exception as e:
         print("❌ Upload failed:", e)
         return jsonify({"error": "Upload failed"}), 500
-    
-
-
-    # ======== ADD BLOCK ENDPOINTS ========
-@app.route('/api/blocks/<int:user_id>', methods=['POST'])
-@jwt_required()
-def block_user(user_id):
-    uid = int(get_jwt_identity())
-    
-    if uid == user_id:
-        return jsonify({"error": "Cannot block yourself"}), 400
-    
-    # Check if already blocked
-    existing = Block.query.filter_by(blocker_id=uid, blocked_id=user_id).first()
-    if existing:
-        return jsonify({"error": "User already blocked"}), 400
-    
-    # Check if user exists
-    user_to_block = User.query.get(user_id)
-    if not user_to_block:
-        return jsonify({"error": "User not found"}), 404
-    
-    block = Block(blocker_id=uid, blocked_id=user_id)
-    db.session.add(block)
-    db.session.commit()
-    
-    return jsonify({"message": "User blocked successfully"}), 201
-
-@app.route('/api/blocks/<int:user_id>', methods=['DELETE'])
-@jwt_required()
-def unblock_user(user_id):
-    uid = int(get_jwt_identity())
-    
-    block = Block.query.filter_by(blocker_id=uid, blocked_id=user_id).first()
-    if not block:
-        return jsonify({"error": "User not blocked"}), 404
-    
-    db.session.delete(block)
-    db.session.commit()
-    
-    return jsonify({"message": "User unblocked successfully"}), 200
-
-@app.route('/api/blocks', methods=['GET'])
-@jwt_required()
-def get_blocked_users():
-    uid = int(get_jwt_identity())
-    blocks = Block.query.filter_by(blocker_id=uid).all()
-    
-    blocked_users = []
-    for block in blocks:
-        user = User.query.get(block.blocked_id)
-        if user:
-            blocked_users.append({
-                "id": user.id,
-                "username": user.username,
-                "avatar": user.avatar,
-                "blocked_at": block.created_at.isoformat()
-            })
-    
-    return jsonify({"blocked_users": blocked_users}), 200
-
-# ======== ADD REPORT ENDPOINTS ========
-@app.route('/api/reports', methods=['POST'])
-@jwt_required()
-def create_report():
-    uid = int(get_jwt_identity())
-    data = request.get_json() or {}
-    
-    # Validate required fields
-    if not data.get('content_type') or not data.get('content_id') or not data.get('reason'):
-        return jsonify({"error": "content_type, content_id, and reason are required"}), 400
-    
-    # Validate content_type
-    valid_content_types = ['post', 'reel', 'comment', 'user']
-    if data.get('content_type') not in valid_content_types:
-        return jsonify({"error": f"content_type must be one of: {', '.join(valid_content_types)}"}), 400
-    
-    report = Report(
-        reporter_id=uid,
-        content_type=data.get('content_type'),
-        content_id=data.get('content_id'),
-        reason=data.get('reason'),
-        description=data.get('description', ''),
-        status='pending'
-    )
-    
-    db.session.add(report)
-    db.session.commit()
-    
-    return jsonify({"message": "Report submitted successfully"}), 201
-
-# ======== ADD LEGAL ENDPOINTS ========
-@app.route('/api/legal/terms', methods=['GET'])
-def get_terms():
-    terms = TermsOfService.query.filter_by(active=True).first()
-    if not terms:
-        return jsonify({"error": "No active terms of service found"}), 404
-    
-    return jsonify({
-        "terms": {
-            "id": terms.id,
-            "version": terms.version,
-            "content": terms.content,
-            "created_at": terms.created_at.isoformat()
-        }
-    }), 200
-
-@app.route('/api/legal/privacy', methods=['GET'])
-def get_privacy_policy():
-    policy = PrivacyPolicy.query.filter_by(active=True).first()
-    if not policy:
-        return jsonify({"error": "No active privacy policy found"}), 404
-    
-    return jsonify({
-        "privacy_policy": {
-            "id": policy.id,
-            "version": policy.version,
-            "content": policy.content,
-            "created_at": policy.created_at.isoformat()
-        }
-    }), 200
-    
-     # ------------------------------------------------
-    # Follow System Endpoints
-     # ------------------------------------------------
-
-@app.route('/api/follow/<int:user_id>', methods=['POST'])
-@jwt_required()
-def follow_user(user_id):
-    uid = int(get_jwt_identity())
-    
-    if uid == user_id:
-        return jsonify({"error": "Cannot follow yourself"}), 400
-    
-    # Check if already following
-    existing = Follow.query.filter_by(follower_id=uid, following_id=user_id).first()
-    if existing:
-        return jsonify({"error": "Already following this user"}), 400
-    
-    # Check if user exists
-    user_to_follow = User.query.get(user_id)
-    if not user_to_follow:
-        return jsonify({"error": "User not found"}), 404
-    
-    follow = Follow(follower_id=uid, following_id=user_id)
-    db.session.add(follow)
-    db.session.commit()
-    
-    return jsonify({"message": "User followed successfully"}), 201
-
-@app.route('/api/follow/<int:user_id>', methods=['DELETE'])
-@jwt_required()
-def unfollow_user(user_id):
-    uid = int(get_jwt_identity())
-    
-    follow = Follow.query.filter_by(follower_id=uid, following_id=user_id).first()
-    if not follow:
-        return jsonify({"error": "Not following this user"}), 404
-    
-    db.session.delete(follow)
-    db.session.commit()
-    
-    return jsonify({"message": "User unfollowed successfully"}), 200
-
-@app.route('/api/follow/status/<int:user_id>', methods=['GET'])
-@jwt_required()
-def get_follow_status(user_id):
-    uid = int(get_jwt_identity())
-    
-    is_following = Follow.query.filter_by(follower_id=uid, following_id=user_id).first() is not None
-    
-    return jsonify({"is_following": is_following}), 200
-
-@app.route('/api/follow/stats/<string:username>', methods=['GET'])
-def get_follow_stats(username):
-    user = User.query.filter_by(username=username).first_or_404()
-    
-    followers_count = Follow.query.filter_by(following_id=user.id).count()
-    following_count = Follow.query.filter_by(follower_id=user.id).count()
-    
-    return jsonify({
-        "followers_count": followers_count,
-        "following_count": following_count
-    }), 200
 
 # ------------------------------------------------
 # Reels CRUD + upload
@@ -1314,18 +1783,6 @@ def clear_ai_history():
     db.session.commit()
     return jsonify({"message": "History cleared"}), 200
 
-# ... your existing AI History code ...
-
-@app.route("/api/ai/history", methods=["DELETE"])
-@jwt_required()
-def delete_ai_history():
-    uid = int(get_jwt_identity())
-    AIHistory.query.filter_by(user_id=uid).delete()
-    db.session.commit()
-    return jsonify({"message": "History cleared"}), 200
-
-
-# ======== CONTINUE WITH EXISTING CODE ========
 # ------------------------------------------------
 # Ping
 # ------------------------------------------------
@@ -1334,56 +1791,11 @@ def ping():
     return jsonify({"ok": True, "time": datetime.utcnow().isoformat()}), 200
 
 # ------------------------------------------------
-# Default Legal Content Creation
+# Register tools blueprint (notes)
 # ------------------------------------------------
-
-def create_default_legal_content():
-    """Create default terms and privacy policy if none exist"""
-    try:
-        # Check if we already have active legal content
-        existing_terms = TermsOfService.query.filter_by(active=True).first()
-        existing_privacy = PrivacyPolicy.query.filter_by(active=True).first()
-        
-        # Create default Terms of Service if none exists
-        if not existing_terms:
-            terms = TermsOfService(
-                version="1.0",
-                content="# Terms of Service\n\n## 1. Acceptance of Terms\nBy using SirVerse, you agree to these terms and our Privacy Policy.\n\n## 2. User Responsibilities\nYou agree not to:\n- Post illegal, harmful, or offensive content\n- Harass or bully other users  \n- Impersonate others\n- Share spam or malicious content\n- Violate intellectual property rights\n- Attempt to hack or disrupt the service\n\n## 3. Content Ownership\nYou own the content you create. By posting, you grant us license to display and distribute your content on our platform.\n\n## 4. Account Termination\nWe reserve the right to suspend or terminate accounts that violate these terms.\n\n## 5. Limitation of Liability\nSirVerse is provided \"as is\" without warranties. We are not liable for damages arising from app use.\n\n## 6. Changes to Terms\nWe may update these terms. Continued use constitutes acceptance of changes.",
-                active=True
-            )
-            db.session.add(terms)
-            print("✅ Created default Terms of Service")
-
-        # Create default Privacy Policy if none exists
-        if not existing_privacy:
-            policy = PrivacyPolicy(
-                version="1.0",
-                content="# Privacy Policy\n\n## 1. Information We Collect\n- Email address for authentication\n- Username and profile information  \n- Posts, comments, and messages you create\n- Images and videos you upload\n- Device information for app optimization\n\n## 2. How We Use Your Information\nWe use your information to:\n- Provide and improve our services\n- Authenticate your account\n- Enable social features (posts, messages)\n- Provide AI assistance through Sir G\n- Ensure platform security\n\n## 3. Data Sharing\nWe do not sell your personal data. We only share information:\n- With your consent\n- To comply with legal obligations  \n- To protect our rights and users\n\n## 4. Your Rights\nYou can:\n- Access your personal data\n- Correct inaccurate data\n- Delete your account and data\n- Export your data\n- Opt-out of communications\n\n## 5. Data Retention\nWe retain your data until you delete your account. Deleted content is removed from our servers within 30 days.\n\n## 6. Contact Us\nFor privacy concerns, contact: privacy@sirverse.com",
-                active=True
-            )
-            db.session.add(policy)
-            print("✅ Created default Privacy Policy")
-        
-        db.session.commit()
-        
-    except Exception as e:
-        print(f"⚠️ Warning: Could not create default legal content: {e}")
-        db.session.rollback()
-
-
 # Ensure backend/routes/__init__.py exists
 #from routes.note_routes import note_bp
 #app.register_blueprint(note_bp)
-app.register_blueprint(moderation_bp)
-app.register_blueprint(legal_bp)
-
-
 if __name__ == "__main__":
-    print("🚀 SirVerse GPT backend running in THREADING mode (production-safe)")
-    socketio.run(
-        app,
-        host="0.0.0.0",
-        port=int(os.getenv("PORT", 5000)),
-        debug=False,
-        allow_unsafe_werkzeug=True  # ✅ This fixes the production crash
-    )
+    print("✅ Ready: Auth, Posts, Upload, Comments, Likes, Profile, Chat (SocketIO), Reels")
+    socketio.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 5000)), debug=True)

@@ -1785,13 +1785,15 @@ def healthcheck():
 # ✅ APP ENTRY POINT — works locally + on Railway
 # ------------------------------------------------
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))  # Railway gives PORT automatically
+    # Railway assigns its own PORT (usually 8080)
+    port = int(os.environ.get("PORT", 8080))
     print(f"🚀 SirVerse GPT backend running on port {port}...")
-    
-    # Run with Eventlet (required for SocketIO stability)
+
+    # Run with Eventlet for Socket.IO stability
     socketio.run(
         app,
         host="0.0.0.0",
         port=port,
-        debug=bool(os.environ.get("DEBUG", True))
+        debug=False  # ✅ disable debug mode on production
     )
+

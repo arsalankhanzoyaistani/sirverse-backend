@@ -1,6 +1,4 @@
-# backend/app.py
 # ✅ backend/app.py
-
 import eventlet
 eventlet.monkey_patch()
 
@@ -21,57 +19,49 @@ import cloudinary
 import cloudinary.uploader
 
 # ------------------------------------------------
-# Load .env from project root
+# Load environment variables
 # ------------------------------------------------
 load_dotenv(dotenv_path=Path(__file__).resolve().parent.parent / ".env")
 
 # ------------------------------------------------
-# Flask app setup (keep only ONE instance)
+# Flask app setup (✅ only ONE instance)
 # ------------------------------------------------
 app = Flask(__name__)
 
-# CORS & JWT setup
-CORS(app, resources={r"/api/*": {"origins": "*"}}, supports_credentials=True)
-jwt = JWTManager(app)
-
-# SocketIO with Eventlet (stable for Railway)
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode="eventlet")
-
-print("✅ Flask + Eventlet initialized successfully")
-
-
-from config.database import init_db, db
-init_db(app)
-migrate = Migrate(app, db)
-
-
-# (rest of your backend code continues...)
-
-
-
-
-# ------------------------------------------------
-# load .env from project root reliably
-load_dotenv(dotenv_path=Path(__file__).resolve().parent.parent / ".env")
-
-# ------------------------------------------------
-# App + config
-# ------------------------------------------------
-app = Flask(__name__)
-
-# fix DATABASE_URL prefix if needed (Railway etc.)
+# Fix DB URL for Railway (convert postgres:// to postgresql+psycopg2://)
 db_url = os.getenv("DATABASE_URL")
 if db_url and db_url.startswith("postgres://"):
     db_url = db_url.replace("postgres://", "postgresql+psycopg2://", 1)
-elif db_url and db_url.startswith("postgresql://"):
-    db_url = db_url.replace("postgresql://", "postgresql+psycopg2://", 1)
 
+# App config
 app.config.update(
     SECRET_KEY=os.getenv("SECRET_KEY", "change-this"),
     JWT_SECRET_KEY=os.getenv("JWT_SECRET_KEY", "jwt-change-this"),
     SQLALCHEMY_DATABASE_URI=db_url or "postgresql+psycopg2://sirverse_user:sirverse123@localhost:5432/sirverse_gpt_db",
-    SQLALCHEMY_TRACK_MODIFICATIONS=False
+    SQLALCHEMY_TRACK_MODIFICATIONS=False,
 )
+
+# ------------------------------------------------
+# Initialize extensions
+# ------------------------------------------------
+from config.database import init_db, db
+init_db(app)
+migrate = Migrate(app, db)
+jwt = JWTManager(app)
+
+# CORS setup for frontend & localhost
+CORS(
+    app,
+    resources={r"/api/*": {"origins": [
+        "http://localhost:3000",
+        "https://sirversegpt.netlify.app"
+    ]}},
+    supports_credentials=True
+)
+
+# SocketIO (Eventlet mode for stability on Railway)
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode="eventlet")
+connected_users = {}
 
 # Cloudinary config
 cloudinary.config(
@@ -81,18 +71,7 @@ cloudinary.config(
     secure=True,
 )
 
-# Import DB init after app config (your config.database file)
-from config.database import init_db, db
-init_db(app)                  # sets up db = SQLAlchemy(app) inside your config
-migrate = Migrate(app, db)
-jwt = JWTManager(app)
-CORS(app, resources={r"/api/*": {"origins": "*"}}, supports_credentials=True)
-# --- SocketIO setup ---
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode="eventlet")
-connected_users = {}  # sid -> user_id mapping for online tracking
-# -----------------------
-
-
+print("✅ Flask, Database, JWT, CORS, and SocketIO initialized successfully.")
 print("🚀 SirVerse GPT backend starting...")
 
 # ------------------------------------------------
@@ -1790,12 +1769,16 @@ def clear_ai_history():
     return jsonify({"message": "History cleared"}), 200
 
 # ------------------------------------------------
-# Ping
+# ✅ HEALTHCHECK ROUTES — For Railway + Frontend
 # ------------------------------------------------
 @app.route("/ping")
-def ping():
-    return jsonify({"ok": True, "time": datetime.utcnow().isoformat()}), 200
-
+@app.route("/api/ping")
+def healthcheck():
+    """
+    Simple endpoint used by Railway (for /ping)
+    and frontend (for /api/ping) to verify backend is alive.
+    """
+    return jsonify({"ok": True, "status": "healthy", "time": datetime.utcnow().isoformat()}), 200
 
 
 # ------------------------------------------------

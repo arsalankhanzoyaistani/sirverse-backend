@@ -1,10 +1,10 @@
 # backend/app.py
-# Add this at the VERY TOP of app.py - before any other imports
+# ✅ backend/app.py
+
 import eventlet
 eventlet.monkey_patch()
 
-# Then your existing imports...
-import os, sys, random, hashlib
+import os, random, hashlib
 from datetime import datetime, timedelta
 from pathlib import Path
 from dotenv import load_dotenv
@@ -20,17 +20,35 @@ from flask_socketio import SocketIO, emit, join_room, leave_room
 import cloudinary
 import cloudinary.uploader
 
-load_dotenv()
+# ------------------------------------------------
+# Load .env from project root
+# ------------------------------------------------
+load_dotenv(dotenv_path=Path(__file__).resolve().parent.parent / ".env")
 
+# ------------------------------------------------
+# Flask app setup (keep only ONE instance)
+# ------------------------------------------------
 app = Flask(__name__)
-CORS(app)
+
+# CORS & JWT setup
+CORS(app, resources={r"/api/*": {"origins": "*"}}, supports_credentials=True)
 jwt = JWTManager(app)
-socketio = SocketIO(app, cors_allowed_origins="*")
+
+# SocketIO with Eventlet (stable for Railway)
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode="eventlet")
+
+print("✅ Flask + Eventlet initialized successfully")
+
+
+from config.database import init_db, db
+init_db(app)
+migrate = Migrate(app, db)
+
 
 # (rest of your backend code continues...)
 
 
-# (rest of your app.py continues below...)
+
 
 # ------------------------------------------------
 # load .env from project root reliably
@@ -1778,12 +1796,19 @@ def clear_ai_history():
 def ping():
     return jsonify({"ok": True, "time": datetime.utcnow().isoformat()}), 200
 
+
+
 # ------------------------------------------------
-# Register tools blueprint (notes)
+# ✅ APP ENTRY POINT — works locally + on Railway
 # ------------------------------------------------
-# Ensure backend/routes/__init__.py exists
-#from routes.note_routes import note_bp
-#app.register_blueprint(note_bp)
 if __name__ == "__main__":
-    print("✅ Ready: Auth, Posts, Upload, Comments, Likes, Profile, Chat (SocketIO), Reels")
-    socketio.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 5000)), debug=True)
+    port = int(os.environ.get("PORT", 5000))  # Railway gives PORT automatically
+    print(f"🚀 SirVerse GPT backend running on port {port}...")
+    
+    # Run with Eventlet (required for SocketIO stability)
+    socketio.run(
+        app,
+        host="0.0.0.0",
+        port=port,
+        debug=bool(os.environ.get("DEBUG", True))
+    )

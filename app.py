@@ -165,6 +165,12 @@ class ChatRoom(db.Model):
     name = db.Column(db.String(150))
     is_group = db.Column(db.Boolean, default=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    participants = db.relationship(
+        "ChatParticipant",
+        backref="room",
+        cascade="all,delete-orphan",
+        lazy=True
+    )
 
 class ChatParticipant(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -208,7 +214,7 @@ class AIHistory(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey("user.id"))
     role = db.Column(db.String(10))
-    message = db.Column(db.Text)
+    message = db.Column(db.Text, nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 # 2. NOW define User model AFTER all other models
@@ -1298,9 +1304,33 @@ def on_send(data):
     text = (data.get("content") or "").strip()
     if not text:
         return
-    msg = Message(room_id=room, sender_id=uid, content=text)
-    db.session.add(msg); db.session.commit()
-    emit("receive_message", message_dict(msg), room=str(room))
+
+    # 1️⃣ Create a temporary instant message (NO DB WAIT)
+    temp_msg = {
+        "id": -1,  # temporary
+        "room_id": room,
+        "sender": {"id": uid},
+        "content": text,
+        "created_at": datetime.utcnow().isoformat(),
+        "created_at_pk": None,
+        "created_at_pk_human": datetime.utcnow().strftime("%Y-%m-%d %I:%M %p")
+    }
+
+    # 2️⃣ Emit instantly → users see message immediately (0.01s)
+    emit("receive_message", temp_msg, room=str(room))
+
+    # 3️⃣ Save to DB in background (FAST + NON-BLOCKING)
+    def save_message():
+        msg = Message(room_id=room, sender_id=uid, content=text)
+        db.session.add(msg)
+        db.session.commit()
+        
+        # After saving, send the REAL message with correct ID + time
+        emit("receive_message", message_dict(msg), room=str(room))
+
+    # Run background saving
+    eventlet.spawn(save_message)
+
 
 # AI Assistant
 import requests, time, hashlib
@@ -1406,11 +1436,21 @@ def get_ai_history():
 def save_ai_message():
     uid = int(get_jwt_identity())
     data = request.get_json() or {}
-    msg = AIHistory(user_id=uid, role=data.get("role"),
-                    message=data.get("text"))
+
+    # SIMPLE + CLEAN FIX
+    role = data.get("role") or data.get("sender")
+    message = data.get("message") or data.get("text")
+
+    msg = AIHistory(
+        user_id=uid,
+        role=role,
+        message=message
+    )
+
     db.session.add(msg)
     db.session.commit()
     return jsonify({"ok": True}), 201
+
 
 @app.route("/api/ai/history", methods=["DELETE"])
 @jwt_required()
@@ -1472,6 +1512,17 @@ def get_terms_of_service():
         ]
     }
     return jsonify(terms), 200
+
+
+# ============================
+# 📦 CREATE ALL DATABASE TABLES
+# ============================
+with app.app_context():
+    try:
+        db.create_all()
+        print("📦 All database tables created successfully.")
+    except Exception as e:
+        print("❌ Error creating tables:", e)
 
 # ------------------------------------------------
 # ✅ APP ENTRY POINT

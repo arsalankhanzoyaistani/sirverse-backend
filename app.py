@@ -54,18 +54,12 @@ jwt = JWTManager(app)
 # ------------------------------------------------
 # CORS setup - UPDATED FOR LOCAL DEVELOPMENT
 # ------------------------------------------------
+
 CORS(app,
+     resources={r"/*": {"origins": "*"}},
      supports_credentials=True,
-     resources={r"/*": {
-         "origins": [
-             "http://127.0.0.1:3000",
-             "https://sirverse.netlify.app",  
-             "exp://*",                 # expo dev
-             "http://*",                # rn web
-             "https://*",               # production mobile/web
-             "null"                     # RN release build
-         ]
-     }}
+     allow_headers=["Content-Type", "Authorization"],
+     expose_headers=["Content-Type", "Authorization"]
 )
 
 

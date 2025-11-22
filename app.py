@@ -177,6 +177,16 @@ class ChatParticipant(db.Model):
     room_id = db.Column(db.Integer, db.ForeignKey("chat_room.id"), nullable=False)
     user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
     joined_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+class Notification(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
+    title = db.Column(db.String(200), nullable=False)
+    message = db.Column(db.Text, nullable=False)
+    notification_type = db.Column(db.String(50), nullable=False)
+    related_id = db.Column(db.Integer, nullable=True)  # post_id, user_id, etc.
+    read = db.Column(db.Boolean, default=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 class Message(db.Model):
     id = db.Column(db.Integer, primary_key=True)

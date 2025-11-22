@@ -668,23 +668,54 @@ def upload_file():
         return jsonify({"error": "No file uploaded"}), 400
 
     f = request.files["file"]
-    if not f.filename.lower().endswith((".jpg", ".jpeg", ".png", ".gif", ".webp")):
-        return jsonify({"error": "Only image files allowed"}), 400
+    if not f or f.filename == '':
+        return jsonify({"error": "No file selected"}), 400
+
+    # Check file extension
+    allowed_extensions = {'.jpg', '.jpeg', '.png', '.gif', '.webp'}
+    file_ext = os.path.splitext(f.filename.lower())[1]
+    if file_ext not in allowed_extensions:
+        return jsonify({"error": "Only image files allowed (JPG, PNG, GIF, WebP)"}), 400
 
     try:
-        up = cloudinary.uploader.upload(
+        print(f"📤 Uploading file: {f.filename}, size: {len(f.read())} bytes")
+        f.seek(0)  # Reset file pointer after reading size
+        
+        # Upload to Cloudinary with better error handling
+        upload_result = cloudinary.uploader.upload(
             f,
-            folder="sirverse_profile_pics",
+            folder="sirverse_posts",
             resource_type="image",
-            transformation=[{"width": 512, "height": 512, "crop": "limit"}],
+            transformation=[
+                {"width": 1200, "height": 1200, "crop": "limit"},  # Limit size but maintain aspect ratio
+                {"quality": "auto"},  # Auto optimize quality
+                {"format": "auto"}    # Auto convert to best format
+            ]
         )
+        
+        print(f"✅ Upload successful: {upload_result.get('secure_url')}")
+        
         return jsonify({
-            "url": up.get("secure_url"),
-            "public_id": up.get("public_id"),
+            "url": upload_result.get("secure_url"),
+            "public_id": upload_result.get("public_id"),
+            "format": upload_result.get("format"),
+            "width": upload_result.get("width"),
+            "height": upload_result.get("height")
         }), 201
+        
     except Exception as e:
-        print("❌ Upload failed:", e)
-        return jsonify({"error": "Upload failed"}), 500
+        print(f"❌ Cloudinary upload failed: {str(e)}")
+        # More detailed error logging
+        import traceback
+        traceback.print_exc()
+        
+        # Check if it's a Cloudinary configuration issue
+        if "Invalid api_key" in str(e):
+            return jsonify({"error": "Cloudinary configuration error - check API keys"}), 500
+        elif "Upload preset" in str(e):
+            return jsonify({"error": "Cloudinary upload preset error"}), 500
+        else:
+            return jsonify({"error": f"Upload failed: {str(e)}"}), 500
 
 @app.route("/api/upload/reel", methods=["POST"])
 @jwt_required()

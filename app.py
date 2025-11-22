@@ -678,18 +678,31 @@ def upload_file():
         return jsonify({"error": "Only image files allowed (JPG, PNG, GIF, WebP)"}), 400
 
     try:
-        print(f"📤 Uploading file: {f.filename}, size: {len(f.read())} bytes")
-        f.seek(0)  # Reset file pointer after reading size
+        print(f"📤 Uploading file: {f.filename}")
         
-        # Upload to Cloudinary with better error handling
+        # Reset file pointer and get file size
+        f.seek(0, 2)  # Go to end
+        file_size = f.tell()
+        f.seek(0)  # Reset to beginning
+        
+        print(f"📁 File size: {file_size} bytes")
+        
+        if file_size > 10 * 1024 * 1024:  # 10MB limit
+            return jsonify({"error": "File too large. Maximum size is 10MB"}), 400
+
+        # Upload to Cloudinary with timeout and retry
+        import socket
+        socket.setdefaulttimeout(30)  # Set socket timeout
+        
         upload_result = cloudinary.uploader.upload(
             f,
             folder="sirverse_posts",
             resource_type="image",
+            timeout=30,  # 30 second timeout
             transformation=[
-                {"width": 1200, "height": 1200, "crop": "limit"},  # Limit size but maintain aspect ratio
-                {"quality": "auto"},  # Auto optimize quality
-                {"format": "auto"}    # Auto convert to best format
+                {"width": 1200, "height": 1200, "crop": "limit"},
+                {"quality": "auto"},
+                {"format": "auto"}
             ]
         )
         
@@ -703,19 +716,22 @@ def upload_file():
             "height": upload_result.get("height")
         }), 201
         
+    except socket.timeout:
+        print("❌ Cloudinary connection timeout")
+        return jsonify({"error": "Cloudinary connection timeout. Please try again."}), 500
     except Exception as e:
         print(f"❌ Cloudinary upload failed: {str(e)}")
-        # More detailed error logging
-        import traceback
-        traceback.print_exc()
         
-        # Check if it's a Cloudinary configuration issue
-        if "Invalid api_key" in str(e):
-            return jsonify({"error": "Cloudinary configuration error - check API keys"}), 500
-        elif "Upload preset" in str(e):
-            return jsonify({"error": "Cloudinary upload preset error"}), 500
+        # More specific error handling
+        error_msg = str(e)
+        if "NameResolutionError" in error_msg or "resolve" in error_msg:
+            return jsonify({"error": "Cannot connect to image service. Please try again later."}), 500
+        elif "timeout" in error_msg.lower():
+            return jsonify({"error": "Upload timeout. Please try again."}), 500
+        elif "Invalid api_key" in error_msg:
+            return jsonify({"error": "Image service configuration error"}), 500
         else:
-            return jsonify({"error": f"Upload failed: {str(e)}"}), 500
+            return jsonify({"error": f"Upload failed: {error_msg}"}), 500
 
 @app.route("/api/upload/reel", methods=["POST"])
 @jwt_required()

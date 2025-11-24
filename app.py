@@ -55,11 +55,12 @@ jwt = JWTManager(app)
 # CORS setup - UPDATED FOR LOCAL DEVELOPMENT
 # ------------------------------------------------
 
-CORS(app,
-     resources={r"/*": {"origins": "*"}},
-     supports_credentials=True,
-     allow_headers=["Content-Type", "Authorization"],
-     expose_headers=["Content-Type", "Authorization"]
+CORS(
+    app,
+    resources={r"/*": {"origins": "*"}},
+    supports_credentials=True,
+    allow_headers=["Content-Type", "Authorization"],
+    expose_headers=["Content-Type", "Authorization"]
 )
 
 
@@ -688,48 +689,49 @@ def upload_file():
         if file_size > 10 * 1024 * 1024:  # 10MB limit
             return jsonify({"error": "File too large. Maximum size is 10MB"}), 400
 
-        # Upload to Cloudinary with timeout and retry
-        import socket
-        socket.setdefaulttimeout(30)  # Set socket timeout
-        
+        # SIMPLIFIED Cloudinary upload - remove complex transformations
         upload_result = cloudinary.uploader.upload(
             f,
-            folder="sirverse_posts",
-            resource_type="image",
-            timeout=30,  # 30 second timeout
-            transformation=[
-                {"width": 1200, "height": 1200, "crop": "limit"},
-                {"quality": "auto"},
-                {"format": "auto"}
-            ]
+            folder="sirverse",
+            resource_type="auto"  # Let Cloudinary detect type automatically
         )
         
         print(f"✅ Upload successful: {upload_result.get('secure_url')}")
         
         return jsonify({
             "url": upload_result.get("secure_url"),
-            "public_id": upload_result.get("public_id"),
-            "format": upload_result.get("format"),
-            "width": upload_result.get("width"),
-            "height": upload_result.get("height")
+            "public_id": upload_result.get("public_id")
         }), 201
         
-    except socket.timeout:
-        print("❌ Cloudinary connection timeout")
-        return jsonify({"error": "Cloudinary connection timeout. Please try again."}), 500
     except Exception as e:
         print(f"❌ Cloudinary upload failed: {str(e)}")
         
-        # More specific error handling
-        error_msg = str(e)
-        if "NameResolutionError" in error_msg or "resolve" in error_msg:
-            return jsonify({"error": "Cannot connect to image service. Please try again later."}), 500
-        elif "timeout" in error_msg.lower():
-            return jsonify({"error": "Upload timeout. Please try again."}), 500
-        elif "Invalid api_key" in error_msg:
-            return jsonify({"error": "Image service configuration error"}), 500
-        else:
-            return jsonify({"error": f"Upload failed: {error_msg}"}), 500
+        # FALLBACK: Save file locally
+        try:
+            import uuid
+            filename = f"{uuid.uuid4()}_{f.filename}"
+            filepath = os.path.join("uploads", filename)
+            
+            # Create uploads directory if it doesn't exist
+            os.makedirs("uploads", exist_ok=True)
+            
+            f.save(filepath)
+            
+            # For Railway, you might need to use a different approach for serving files
+            # This creates a local URL that your frontend can access
+            local_url = f"/uploads/{filename}"
+            
+            print(f"✅ File saved locally: {filename}")
+            
+            return jsonify({
+                "url": local_url,
+                "public_id": filename,
+                "note": "File saved locally (Cloudinary failed)"
+            }), 201
+            
+        except Exception as fallback_error:
+            print(f"❌ Local fallback also failed: {str(fallback_error)}")
+            return jsonify({"error": "Upload failed. Please try a different file or try again later."}), 500
 
 @app.route("/api/upload/reel", methods=["POST"])
 @jwt_required()
@@ -738,30 +740,69 @@ def upload_reel():
         return jsonify({"error": "No file uploaded"}), 400
 
     f = request.files["file"]
+    if not f or f.filename == '':
+        return jsonify({"error": "No file selected"}), 400
+
+    # Check video file extensions
     if not f.filename.lower().endswith((".mp4", ".mov", ".avi", ".webm", ".mkv")):
         return jsonify({"error": "Only video files allowed (MP4, MOV, AVI, WEBM, MKV)"}), 400
 
     try:
-        up = cloudinary.uploader.upload(
+        print(f"🎬 Uploading reel: {f.filename}")
+        
+        # Get file size
+        f.seek(0, 2)
+        file_size = f.tell()
+        f.seek(0)
+        
+        print(f"📁 Reel size: {file_size} bytes")
+        
+        if file_size > 50 * 1024 * 1024:  # 50MB limit for videos
+            return jsonify({"error": "Video too large. Maximum size is 50MB"}), 400
+
+        # SIMPLIFIED video upload
+        upload_result = cloudinary.uploader.upload(
             f,
             folder="sirverse_reels",
-            resource_type="video",
-            transformation=[
-                {"width": 720, "height": 1280, "crop": "limit"},
-                {"duration": 30}
-            ],
+            resource_type="video"
         )
         
+        print(f"✅ Reel upload successful: {upload_result.get('secure_url')}")
+        
         return jsonify({
-            "url": up.get("secure_url"),
-            "public_id": up.get("public_id"),
-            "duration": up.get("duration"),
-            "format": up.get("format")
+            "url": upload_result.get("secure_url"),
+            "public_id": upload_result.get("public_id"),
+            "duration": upload_result.get("duration"),
+            "format": upload_result.get("format")
         }), 201
         
     except Exception as e:
-        print("❌ Reel upload failed:", e)
-        return jsonify({"error": "Reel upload failed"}), 500
+        print(f"❌ Reel upload failed: {str(e)}")
+        
+        # FALLBACK for reels
+        try:
+            import uuid
+            filename = f"{uuid.uuid4()}_{f.filename}"
+            filepath = os.path.join("uploads", filename)
+            
+            os.makedirs("uploads", exist_ok=True)
+            f.save(filepath)
+            
+            local_url = f"/uploads/{filename}"
+            
+            print(f"✅ Reel saved locally: {filename}")
+            
+            return jsonify({
+                "url": local_url,
+                "public_id": filename,
+                "note": "Reel saved locally (Cloudinary failed)"
+            }), 201
+            
+        except Exception as fallback_error:
+            print(f"❌ Reel fallback failed: {str(fallback_error)}")
+            return jsonify({"error": "Reel upload failed. Please try a different video or try again later."}), 500
+
+    
 
 @app.route("/api/reels", methods=["GET"])
 @jwt_required(optional=True)
@@ -1443,36 +1484,80 @@ def sirg_chat():
         return jsonify({"error": "prompt required"}), 400
 
     mode = (data.get("mode") or "explain").lower()
-    prefix = {
+    
+    # Define prefix for different modes
+    prefix_map = {
         "explain": "Explain step by step and clearly:",
         "summarize": "Summarize this text as short study notes:",
         "quiz": "Create 5 multiple-choice questions with answers about:",
         "translate_urdu": "Translate the following into Urdu (simple words):",
-    }.get(mode, "Explain:")
-
+    }
+    
+    prefix = prefix_map.get(mode, "Explain:")
+    
+    # FALLBACK RESPONSES - Always available even when AI is down
+    fallback_responses = {
+        "explain": f"**I'd be happy to explain '{prompt}'!** 🔍\n\nSince the AI service is temporarily being configured, here's what I suggest:\n\n• **Look up '{prompt}'** in your textbooks or course materials\n• **Ask your teacher** for clarification during class\n• **Search reliable educational websites** like Khan Academy or educational YouTube channels\n• **Discuss with classmates** to get different perspectives\n• **Break it down into smaller parts** and research each one\n\nThe AI feature will be fully operational soon! In the meantime, these traditional learning methods are very effective. 🎓",
+        
+        "summarize": f"**Let me help summarize '{prompt}'!** 📝\n\n**Key Areas to Focus On:**\n• **Main concepts and ideas** - What are the core principles?\n• **Important dates/events** - Any significant timeline?\n• **Key people/places** - Who or what is central to this topic?\n• **Cause and effect** - How do different elements relate?\n• **Key takeaways** - What's most important to remember?\n\n**Study Tip:** Create bullet points or mind maps for better retention! 🧠\n\nThe summarization feature is being upgraded and will return shortly with enhanced capabilities!",
+        
+        "quiz": f"**Great! Let me create a quiz about '{prompt}'!** 🎯\n\n**Sample Quiz Structure You Can Create:**\n\n**Multiple Choice (Create 3-5 questions):**\n1. What is the main concept of {prompt}?\n   A) [Option A]\n   B) [Option B] \n   C) [Option C]\n   D) [Option D]\n\n**True/False (Create 2-3 statements):**\n1. {prompt} involves complex calculations. (True/False)\n2. This topic is primarily theoretical. (True/False)\n\n**Short Answer (Create 1-2 questions):**\n1. Explain the significance of {prompt} in your own words.\n\n**Study Tip:** Creating your own quiz questions is an excellent learning strategy! 📚\n\nThe quiz generator is currently being enhanced with more question types and will be available soon!",
+        
+        "translate_urdu": f"**میں آپ کے سوال '{prompt}' کا ترجمہ کر سکتا ہوں!** 🌐\n\n**اردو ترجمہ کے لیے مفید مشورے:**\n• **واضح اور سادہ جملے** استعمال کریں\n• **مناسب اردو الفاظ** منتخب کریں\n• **گرامر کا خیال** رکھیں\n• **مقامی زبان** کے الفاظ شامل کریں\n\n**مثال کے طور پر:**\nاگر آپ کا سوال سائنس کے بارے میں ہے، تو 'Science' کا ترجمہ 'سائنس' کریں۔\n\n**ترجمہ کی سروس** جلد دستیاب ہوگی! اس وقت آپ درج ذیل طریقے استعمال کر سکتے ہیں:\n• **گوگل ٹرانسلیٹ** کا استعمال\n• **اردو لغت** سے مدد لیں\n• **اساتذہ سے پوچھیں**\n\nشکریہ! 🎉 انتظار کیجیے، یہ فیچر جلد ہی مکمل طور پر فعال ہو جائے گا۔"
+    }
+    
+    # Try real AI first if API keys are available
     full_prompt = f"{prefix}\n\n{prompt}"
     cache_key = hashlib.sha256(full_prompt.encode()).hexdigest()
+    
+    # Check cache first
     cached = get_cache(cache_key)
     if cached:
-        return jsonify({"reply": cached, "cached": True})
+        return jsonify({"reply": cached, "cached": True, "source": "cache"})
 
-    if GROQ_API_KEY:
+    # Try Groq AI
+    if GROQ_API_KEY and GROQ_API_KEY != "your_groq_api_key_here":
         try:
+            print(f"🤖 Trying Groq AI for: {prompt[:50]}...")
             reply = query_groq(full_prompt)
             set_cache(cache_key, reply)
-            return jsonify({"reply": reply, "source": "groq"})
+            return jsonify({
+                "reply": reply, 
+                "source": "groq",
+                "cached": False
+            })
         except Exception as e:
-            print("Groq error:", e)
+            print(f"❌ Groq error: {str(e)}")
 
-    if HF_API_KEY:
+    # Try HuggingFace
+    if HF_API_KEY and HF_API_KEY != "your_huggingface_api_key_here":
         try:
+            print(f"🤖 Trying HuggingFace for: {prompt[:50]}...")
             reply = query_hf(full_prompt)
             set_cache(cache_key, reply)
-            return jsonify({"reply": reply, "source": "huggingface"})
+            return jsonify({
+                "reply": reply, 
+                "source": "huggingface", 
+                "cached": False
+            })
         except Exception as e:
-            print("HF error:", e)
+            print(f"❌ HuggingFace error: {str(e)}")
 
-    return jsonify({"error": "No AI provider available"}), 502
+    # Use intelligent fallback response
+    fallback_reply = fallback_responses.get(
+        mode, 
+        f"**I received your question about '{prompt}'!** 📚\n\n**The AI service is currently being set up and will be available soon.**\n\n**In the meantime, here are some helpful suggestions:**\n• **Research online** using educational resources\n• **Consult your textbooks** or course materials\n• **Ask your teacher or professor** for guidance\n• **Form a study group** with classmates\n• **Break down complex topics** into smaller, manageable parts\n\n**Learning Tip:** Sometimes the process of searching for answers yourself can lead to deeper understanding! 🌟\n\nThank you for your patience while we enhance this feature! 🚀"
+    )
+    
+    print(f"📝 Using fallback response for mode: {mode}")
+    
+    return jsonify({
+        "reply": fallback_reply, 
+        "source": "fallback",
+        "note": "AI service is being configured - educational suggestions provided",
+        "cached": False
+    })
+
 
 @app.route("/api/ai/history", methods=["GET"])
 @jwt_required()

@@ -1302,6 +1302,20 @@ def get_report_types():
     
     return jsonify({"report_types": report_types}), 200
 
+
+
+@app.route("/delete-account")
+def delete_account_page():
+    return """
+    <html>
+      <head><title>Delete Account – SirVerse</title></head>
+      <body>
+        <h2>Delete Account Request</h2>
+        <p>To delete your SirVerse account and all associated data, please email <strong>sirversegpt@gmail.com</strong> from the email address you used to register. We will process your request within 30 days.</p>
+      </body>
+    </html>
+       """
+
 # Chat System
 @app.route("/api/chats", methods=["GET"])
 @jwt_required()

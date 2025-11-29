@@ -1497,31 +1497,8 @@ def sirg_chat():
     if not prompt:
         return jsonify({"error": "prompt required"}), 400
 
-    mode = (data.get("mode") or "explain").lower()
-    
-    # Define prefix for different modes
-    prefix_map = {
-        "explain": "Explain step by step and clearly:",
-        "summarize": "Summarize this text as short study notes:",
-        "quiz": "Create 5 multiple-choice questions with answers about:",
-        "translate_urdu": "Translate the following into Urdu (simple words):",
-    }
-    
-    prefix = prefix_map.get(mode, "Explain:")
-    
-    # FALLBACK RESPONSES - Always available even when AI is down
-    fallback_responses = {
-        "explain": f"**I'd be happy to explain '{prompt}'!** 🔍\n\nSince the AI service is temporarily being configured, here's what I suggest:\n\n• **Look up '{prompt}'** in your textbooks or course materials\n• **Ask your teacher** for clarification during class\n• **Search reliable educational websites** like Khan Academy or educational YouTube channels\n• **Discuss with classmates** to get different perspectives\n• **Break it down into smaller parts** and research each one\n\nThe AI feature will be fully operational soon! In the meantime, these traditional learning methods are very effective. 🎓",
-        
-        "summarize": f"**Let me help summarize '{prompt}'!** 📝\n\n**Key Areas to Focus On:**\n• **Main concepts and ideas** - What are the core principles?\n• **Important dates/events** - Any significant timeline?\n• **Key people/places** - Who or what is central to this topic?\n• **Cause and effect** - How do different elements relate?\n• **Key takeaways** - What's most important to remember?\n\n**Study Tip:** Create bullet points or mind maps for better retention! 🧠\n\nThe summarization feature is being upgraded and will return shortly with enhanced capabilities!",
-        
-        "quiz": f"**Great! Let me create a quiz about '{prompt}'!** 🎯\n\n**Sample Quiz Structure You Can Create:**\n\n**Multiple Choice (Create 3-5 questions):**\n1. What is the main concept of {prompt}?\n   A) [Option A]\n   B) [Option B] \n   C) [Option C]\n   D) [Option D]\n\n**True/False (Create 2-3 statements):**\n1. {prompt} involves complex calculations. (True/False)\n2. This topic is primarily theoretical. (True/False)\n\n**Short Answer (Create 1-2 questions):**\n1. Explain the significance of {prompt} in your own words.\n\n**Study Tip:** Creating your own quiz questions is an excellent learning strategy! 📚\n\nThe quiz generator is currently being enhanced with more question types and will be available soon!",
-        
-        "translate_urdu": f"**میں آپ کے سوال '{prompt}' کا ترجمہ کر سکتا ہوں!** 🌐\n\n**اردو ترجمہ کے لیے مفید مشورے:**\n• **واضح اور سادہ جملے** استعمال کریں\n• **مناسب اردو الفاظ** منتخب کریں\n• **گرامر کا خیال** رکھیں\n• **مقامی زبان** کے الفاظ شامل کریں\n\n**مثال کے طور پر:**\nاگر آپ کا سوال سائنس کے بارے میں ہے، تو 'Science' کا ترجمہ 'سائنس' کریں۔\n\n**ترجمہ کی سروس** جلد دستیاب ہوگی! اس وقت آپ درج ذیل طریقے استعمال کر سکتے ہیں:\n• **گوگل ٹرانسلیٹ** کا استعمال\n• **اردو لغت** سے مدد لیں\n• **اساتذہ سے پوچھیں**\n\nشکریہ! 🎉 انتظار کیجیے، یہ فیچر جلد ہی مکمل طور پر فعال ہو جائے گا۔"
-    }
-    
-    # Try real AI first if API keys are available
-    full_prompt = f"{prefix}\n\n{prompt}"
+    # Simple prompt without any mode prefixes - just like ChatGPT
+    full_prompt = prompt
     cache_key = hashlib.sha256(full_prompt.encode()).hexdigest()
     
     # Check cache first
@@ -1557,13 +1534,28 @@ def sirg_chat():
         except Exception as e:
             print(f"❌ HuggingFace error: {str(e)}")
 
-    # Use intelligent fallback response
-    fallback_reply = fallback_responses.get(
-        mode, 
-        f"**I received your question about '{prompt}'!** 📚\n\n**The AI service is currently being set up and will be available soon.**\n\n**In the meantime, here are some helpful suggestions:**\n• **Research online** using educational resources\n• **Consult your textbooks** or course materials\n• **Ask your teacher or professor** for guidance\n• **Form a study group** with classmates\n• **Break down complex topics** into smaller, manageable parts\n\n**Learning Tip:** Sometimes the process of searching for answers yourself can lead to deeper understanding! 🌟\n\nThank you for your patience while we enhance this feature! 🚀"
-    )
+    # Simple fallback response when no AI service is available
+    fallback_reply = f"""I'd be happy to help you with **"{prompt}"**! 📚
+
+However, the AI service is currently being configured. Here are some suggestions:
+
+**For better understanding:**
+• Research this topic in your textbooks or course materials
+• Ask your teacher or professor for clarification
+• Discuss with classmates in a study group
+• Look up reliable educational resources online
+
+**Study tips:**
+• Break down complex topics into smaller parts
+• Take notes as you research
+• Create flashcards for key concepts
+• Practice explaining it to someone else
+
+The AI feature will be fully available soon! In the meantime, these traditional learning methods are very effective for building solid understanding. 🎓
+
+Is there anything specific about this topic you'd like me to suggest resources for?"""
     
-    print(f"📝 Using fallback response for mode: {mode}")
+    print(f"📝 Using fallback response for prompt: {prompt[:50]}...")
     
     return jsonify({
         "reply": fallback_reply, 
@@ -1584,6 +1576,7 @@ def get_ai_history():
          "time": m.created_at.isoformat()}
         for m in msgs
     ]), 200
+
 
 @app.route("/api/ai/history", methods=["POST"])
 @jwt_required()
@@ -1619,7 +1612,7 @@ def clear_ai_history():
 def get_privacy_policy():
     policy = {
         "title": "Privacy Policy",
-        "last_updated": "2024-01-01",
+        "last_updated": "12-11-2025",
         "sections": [
             {
                 "title": "Information We Collect",
